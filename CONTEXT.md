@@ -8,6 +8,16 @@ touching a real external calendar, paying per-call for premium data, and getting
 traced end to end. Chosen so every AgentCore primitive in scope is load-bearing in one
 coherent story rather than a disconnected toy demo per primitive.
 
+## Scenario city
+
+One of Wayfarer's 3 fixed cities the trip-planning scenario searches and holds
+against: **Tokyo, Paris, New York**. Picked while building Gateway's booking
+target (issue #15) — no other ticket had named them. Every `search-flights`/
+`search-hotels` candidate and Knowledge Base destination guide is scoped to
+one of these three; the set is fixed, not Caller-chosen.
+_Avoid_: Destination (bare) — Scenario city names the fixed 3-city set this
+project uses, not any city a real Caller could name.
+
 ## Primitive
 
 One of the 10 Amazon Bedrock AgentCore capabilities in scope for Wayfarer, all GA as of

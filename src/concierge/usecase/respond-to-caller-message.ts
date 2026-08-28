@@ -3,12 +3,13 @@ import type { ConciergeReply } from "../domain/concierge-reply";
 import { PlanningConversation } from "../domain/planning-conversation";
 import type { Result } from "../domain/result";
 import type { RuntimeSessionId } from "../domain/runtime-session-id";
-import type { ConversationRepository, ModelClient, ModelError, SessionLock } from "./ports";
+import type { ConversationRepository, ModelClient, ModelError, SessionLock, ToolExecutor } from "./ports";
 
 export type RespondToCallerMessagePorts = {
   readonly modelClient: ModelClient;
   readonly conversationRepository: ConversationRepository;
   readonly sessionLock: SessionLock;
+  readonly toolExecutor: ToolExecutor;
 };
 
 export async function respondToCallerMessage(
@@ -20,7 +21,11 @@ export async function respondToCallerMessage(
     const conversation =
       ports.conversationRepository.get(sessionId) ?? PlanningConversation.empty(sessionId);
 
-    const replyResult = await ports.modelClient.generateReply(conversation.turns, message);
+    const replyResult = await ports.modelClient.generateReply(
+      conversation.turns,
+      message,
+      ports.toolExecutor,
+    );
     if (!replyResult.ok) {
       return replyResult;
     }

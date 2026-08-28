@@ -5,18 +5,20 @@ import { InMemorySessionLock } from "../../../src/concierge/adapter/in-memory-se
 import { respondToCallerMessage } from "../../../src/concierge/usecase/respond-to-caller-message";
 import type { ConciergeReply } from "../../../src/concierge/domain/concierge-reply";
 import type { ModelClient, ModelError } from "../../../src/concierge/usecase/ports";
-import { FakeModelClient } from "../support/fakes";
+import { FakeModelClient, FakeToolExecutor } from "../support/fakes";
 import { aCallerMessage, aConciergeReply, aRuntimeSessionId } from "../support/object-mothers";
 
 describe("respondToCallerMessage", () => {
   let modelClient: FakeModelClient;
   let conversationRepository: InMemoryConversationRepository;
   let sessionLock: InMemorySessionLock;
+  let toolExecutor: FakeToolExecutor;
 
   beforeEach(() => {
     modelClient = new FakeModelClient(ok(aConciergeReply()));
     conversationRepository = new InMemoryConversationRepository();
     sessionLock = new InMemorySessionLock();
+    toolExecutor = new FakeToolExecutor();
   });
 
   it("returns the model's reply and records the turn", async () => {
@@ -26,7 +28,7 @@ describe("respondToCallerMessage", () => {
     modelClient.respondWith(ok(reply));
 
     const result = await respondToCallerMessage(
-      { modelClient, conversationRepository, sessionLock },
+      { modelClient, conversationRepository, sessionLock, toolExecutor },
       sessionId,
       message,
     );
@@ -36,17 +38,27 @@ describe("respondToCallerMessage", () => {
     expect(conversation?.turns).toEqual([{ message, reply }]);
   });
 
+  it("passes the composition root's toolExecutor straight through to the model client", async () => {
+    await respondToCallerMessage(
+      { modelClient, conversationRepository, sessionLock, toolExecutor },
+      aRuntimeSessionId(),
+      aCallerMessage("Plan me a trip to Tokyo"),
+    );
+
+    expect(modelClient.receivedToolExecutors).toEqual([toolExecutor]);
+  });
+
   it("gives the model client only the requesting session's transcript", async () => {
     const sessionA = aRuntimeSessionId("a");
     const sessionB = aRuntimeSessionId("b");
     await respondToCallerMessage(
-      { modelClient, conversationRepository, sessionLock },
+      { modelClient, conversationRepository, sessionLock, toolExecutor },
       sessionA,
       aCallerMessage("I only exist in session A"),
     );
 
     await respondToCallerMessage(
-      { modelClient, conversationRepository, sessionLock },
+      { modelClient, conversationRepository, sessionLock, toolExecutor },
       sessionB,
       aCallerMessage("What did I say before?"),
     );
@@ -61,7 +73,7 @@ describe("respondToCallerMessage", () => {
     modelClient.respondWith(err(modelError));
 
     const result = await respondToCallerMessage(
-      { modelClient, conversationRepository, sessionLock },
+      { modelClient, conversationRepository, sessionLock, toolExecutor },
       sessionId,
       aCallerMessage("Plan me a trip to Tokyo"),
     );
@@ -78,19 +90,19 @@ describe("respondToCallerMessage", () => {
     });
     let generateReplyCalls = 0;
     const slowModelClient: ModelClient = {
-      generateReply: async () => {
+      generateReply: async (_transcript, _message, _toolExecutor) => {
         generateReplyCalls += 1;
         return generateReplyCalls === 1 ? firstReplyPending : ok(aConciergeReply("second reply"));
       },
     };
 
     const firstCall = respondToCallerMessage(
-      { modelClient: slowModelClient, conversationRepository, sessionLock },
+      { modelClient: slowModelClient, conversationRepository, sessionLock, toolExecutor },
       sessionId,
       aCallerMessage("first message"),
     );
     const secondCall = respondToCallerMessage(
-      { modelClient: slowModelClient, conversationRepository, sessionLock },
+      { modelClient: slowModelClient, conversationRepository, sessionLock, toolExecutor },
       sessionId,
       aCallerMessage("second message"),
     );
