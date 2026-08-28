@@ -1,0 +1,34 @@
+{
+  "name": "agentcore-wayfarer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build:handler": "rm -rf dist/concierge && node scripts/build-handler.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "cdk": "cdk",
+    "deploy": "npm run build:handler && cdk deploy --app \"npx ts-node --prefer-ts-exts infra/cdk/bin/app.ts\""
+  },
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.1120.0",
+    "bedrock-agentcore": "^0.4.3",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-bedrock-agentcore-control": "^3.1120.0",
+    "@types/node": "^22.10.0",
+    "aws-cdk": "^2.267.0",
+    "aws-cdk-lib": "^2.267.0",
+    "aws-sdk-client-mock": "^4.1.0",
+    "constructs": "^10.4.2",
+    "esbuild": "^0.24.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}
