@@ -3,11 +3,13 @@ import {
   ConverseCommand,
   type ConverseCommandOutput,
   type Message,
+  type SystemContentBlock,
   type ToolConfiguration,
 } from "@aws-sdk/client-bedrock-runtime";
 import type { DocumentType } from "@smithy/types";
 import { BOOKING_TOOL_DEFINITIONS } from "../../booking-gateway/tool-catalog";
 import type { CallerMessage } from "../domain/caller-message";
+import type { CallerPreference } from "../domain/caller-preference";
 import { parseConciergeReply, type ConciergeReply } from "../domain/concierge-reply";
 import type { ConversationTurn } from "../domain/conversation-turn";
 import { err, ok, type Result } from "../domain/result";
@@ -44,8 +46,10 @@ export class BedrockConverseModelClient implements ModelClient {
     transcript: readonly ConversationTurn[],
     message: CallerMessage,
     toolExecutor: ToolExecutor,
+    preferences: readonly CallerPreference[],
   ): Promise<Result<ConciergeReply, ModelError>> {
     const messages: Message[] = [...toBedrockMessages(transcript), toUserMessage(message)];
+    const system = toSystemBlocks(preferences);
 
     try {
       for (let round = 0; round < MAX_TOOL_USE_ROUNDS; round += 1) {
@@ -53,6 +57,7 @@ export class BedrockConverseModelClient implements ModelClient {
           new ConverseCommand({
             modelId: this.modelId,
             messages,
+            ...(system ? { system } : {}),
             toolConfig: BOOKING_TOOL_CONFIG,
             inferenceConfig: { maxTokens: MAX_OUTPUT_TOKENS },
           }),
@@ -86,6 +91,14 @@ function toBedrockMessages(transcript: readonly ConversationTurn[]): Message[] {
 
 function toUserMessage(message: CallerMessage): Message {
   return { role: "user", content: [{ text: message }] };
+}
+
+function toSystemBlocks(preferences: readonly CallerPreference[]): SystemContentBlock[] | undefined {
+  if (preferences.length === 0) {
+    return undefined;
+  }
+  const facts = preferences.map((preference) => `- ${preference}`).join("\n");
+  return [{ text: `What you already know about this returning Caller:\n${facts}` }];
 }
 
 function extractToolCalls(response: ConverseCommandOutput): ToolCall[] {

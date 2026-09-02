@@ -1,7 +1,8 @@
+import { BedrockAgentCoreClient } from "@aws-sdk/client-bedrock-agentcore";
 import { BedrockRuntimeClient } from "@aws-sdk/client-bedrock-runtime";
+import { AgentCoreMemoryAdapter } from "../adapter/agentcore-memory-adapter";
 import { BedrockConverseModelClient } from "../adapter/bedrock-converse-model-client";
 import { BookingGatewayAdapter } from "../adapter/booking-gateway-adapter";
-import { InMemoryConversationRepository } from "../adapter/in-memory-conversation-repository";
 import { InMemorySessionLock } from "../adapter/in-memory-session-lock";
 import { createSigV4Fetch } from "../adapter/sigv4-fetch";
 import { BookingToolExecutor } from "../usecase/booking-tool-executor";
@@ -15,6 +16,7 @@ export function buildConciergePorts(): RespondToCallerMessagePorts {
   const region = process.env.AWS_REGION ?? DEFAULT_REGION;
   const modelId = process.env.CONCIERGE_MODEL_ID ?? CONCIERGE_MODEL_ID;
   const gatewayUrl = requireEnv("GATEWAY_URL");
+  const memoryId = requireEnv("MEMORY_ID");
 
   const bookingGateway = new BookingGatewayAdapter(
     gatewayUrl,
@@ -23,7 +25,7 @@ export function buildConciergePorts(): RespondToCallerMessagePorts {
 
   return {
     modelClient: new BedrockConverseModelClient(new BedrockRuntimeClient({ region }), modelId),
-    conversationRepository: new InMemoryConversationRepository(),
+    memory: new AgentCoreMemoryAdapter(new BedrockAgentCoreClient({ region }), memoryId),
     sessionLock: new InMemorySessionLock(),
     toolExecutor: new BookingToolExecutor(bookingGateway),
   };

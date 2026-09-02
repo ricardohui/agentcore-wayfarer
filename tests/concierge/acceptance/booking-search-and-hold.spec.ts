@@ -1,9 +1,15 @@
+import {
+  CreateEventCommand,
+  ListEventsCommand,
+  RetrieveMemoryRecordsCommand,
+} from "@aws-sdk/client-bedrock-agentcore";
 import { ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
 import type { DocumentType } from "@smithy/types";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { app } from "../../../src/concierge/infra/handler";
 import { bedrockMock } from "../support/bedrock-network-boundary";
 import { GatewayMockServer } from "../support/gateway-network-boundary";
+import { memoryMock } from "../support/memory-network-boundary";
 
 const PORT = 41824;
 const BASE_URL = `http://127.0.0.1:${PORT}`;
@@ -23,6 +29,10 @@ describe("Booking search-and-hold vertical slice (REQ-GATEWAY-001, REQ-GATEWAY-0
 
   beforeEach(() => {
     bedrockMock.reset();
+    memoryMock.reset();
+    memoryMock.on(CreateEventCommand).resolves({});
+    memoryMock.on(ListEventsCommand).resolves({ events: [] });
+    memoryMock.on(RetrieveMemoryRecordsCommand).resolves({ memoryRecordSummaries: [] });
     gateway = new GatewayMockServer();
   });
 

@@ -1,7 +1,13 @@
+import {
+  CreateEventCommand,
+  ListEventsCommand,
+  RetrieveMemoryRecordsCommand,
+} from "@aws-sdk/client-bedrock-agentcore";
 import { ConverseCommand, ThrottlingException } from "@aws-sdk/client-bedrock-runtime";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { app } from "../../../src/concierge/infra/handler";
 import { bedrockMock } from "../support/bedrock-network-boundary";
+import { memoryMock } from "../support/memory-network-boundary";
 
 const PORT = 41823;
 const BASE_URL = `http://127.0.0.1:${PORT}`;
@@ -19,6 +25,10 @@ describe("Concierge round trip (REQ-RUNTIME-001, REQ-RUNTIME-002, REQ-RUNTIME-00
 
   beforeEach(() => {
     bedrockMock.reset();
+    memoryMock.reset();
+    memoryMock.on(CreateEventCommand).resolves({});
+    memoryMock.on(ListEventsCommand).resolves({ events: [] });
+    memoryMock.on(RetrieveMemoryRecordsCommand).resolves({ memoryRecordSummaries: [] });
   });
 
   it("passes its health check", async () => {
@@ -37,13 +47,32 @@ describe("Concierge round trip (REQ-RUNTIME-001, REQ-RUNTIME-002, REQ-RUNTIME-00
     expect(reply).toBe("Let's plan your trip!");
   });
 
-  it("keeps two Runtime sessions isolated (REQ-RUNTIME-002)", async () => {
+  it("keeps two Runtime sessions isolated (REQ-RUNTIME-002, REQ-MEMORY-001)", async () => {
+    const sessionAId = aSessionId("session-a");
+    // Memory's get_last_k_turns is session-scoped (issue #16) — simulate
+    // session A already having a prior turn on file, and confirm session B's
+    // ListEvents call (a different sessionId) never sees it.
+    memoryMock.on(ListEventsCommand).callsFake((input) =>
+      input.sessionId === sessionAId
+        ? {
+            events: [
+              {
+                eventId: "event-a-1",
+                payload: [
+                  { conversational: { role: "USER", content: { text: "I only exist in session A" } } },
+                  { conversational: { role: "ASSISTANT", content: { text: "Noted!" } } },
+                ],
+              },
+            ],
+          }
+        : { events: [] },
+    );
     bedrockMock.on(ConverseCommand).callsFake((input) => {
       const turnsSeenByModel = input.messages?.length ?? 0;
       return aConverseResponse(`turns-seen:${turnsSeenByModel}`);
     });
 
-    await invoke(aSessionId("session-a"), "I only exist in session A");
+    await invoke(sessionAId, "I only exist in session A");
     const replyToSessionB = await invoke(aSessionId("session-b"), "What did I say before?");
 
     expect(replyToSessionB).toBe("turns-seen:1");

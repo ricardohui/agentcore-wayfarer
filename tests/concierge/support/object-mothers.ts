@@ -1,4 +1,6 @@
+import { parseActorId, type ActorId } from "../../../src/concierge/domain/actor-id";
 import { parseCallerMessage, type CallerMessage } from "../../../src/concierge/domain/caller-message";
+import { parseCallerPreference, type CallerPreference } from "../../../src/concierge/domain/caller-preference";
 import { parseConciergeReply, type ConciergeReply } from "../../../src/concierge/domain/concierge-reply";
 import { FlightCandidate } from "../../../src/concierge/domain/flight-candidate";
 import { Hold } from "../../../src/concierge/domain/hold";
@@ -15,6 +17,14 @@ function unwrap<TValue>(result: { ok: boolean; value?: TValue }): TValue {
 
 export function aRuntimeSessionId(suffix = "aaaa"): RuntimeSessionId {
   return unwrap(parseRuntimeSessionId(`test-session-${suffix}`.padEnd(33, "-")));
+}
+
+export function anActorId(suffix = "1"): ActorId {
+  return unwrap(parseActorId(`test-actor-${suffix}`));
+}
+
+export function aCallerPreference(text = "home airport: NRT"): CallerPreference {
+  return unwrap(parseCallerPreference(text));
 }
 
 export function aCallerMessage(text = "Plan me a trip to Tokyo"): CallerMessage {

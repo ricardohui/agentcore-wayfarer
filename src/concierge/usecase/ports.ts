@@ -1,11 +1,13 @@
+import type { ActorId } from "../domain/actor-id";
 import type { CallerMessage } from "../domain/caller-message";
+import type { CallerPreference } from "../domain/caller-preference";
 import type { ConciergeReply } from "../domain/concierge-reply";
 import type { ConversationTurn } from "../domain/conversation-turn";
 import type { FlightCandidate, FlightCandidateId } from "../domain/flight-candidate";
 import type { GatewayError } from "../domain/gateway-error";
 import type { Hold } from "../domain/hold";
 import type { HotelCandidate, HotelCandidateId } from "../domain/hotel-candidate";
-import type { PlanningConversation } from "../domain/planning-conversation";
+import type { MemoryError } from "../domain/memory-error";
 import type { Result } from "../domain/result";
 import type { RuntimeSessionId } from "../domain/runtime-session-id";
 import type { ScenarioCity } from "../domain/scenario-city";
@@ -33,6 +35,7 @@ export interface ModelClient {
     transcript: readonly ConversationTurn[],
     message: CallerMessage,
     toolExecutor: ToolExecutor,
+    preferences: readonly CallerPreference[],
   ): Promise<Result<ConciergeReply, ModelError>>;
 }
 
@@ -46,9 +49,22 @@ export interface BookingGatewayPort {
   holdHotel(candidateId: HotelCandidateId): Promise<Result<Hold, GatewayError>>;
 }
 
-export interface ConversationRepository {
-  get(sessionId: RuntimeSessionId): PlanningConversation | undefined;
-  save(conversation: PlanningConversation): void;
+// Memory (issue #16): create_event/get_last_k_turns back scratch state
+// (session-scoped — a fresh runtimeSessionId sees no prior turns) and the
+// user-preference/semantic Strategies extract long-term facts from those
+// same events, recalled here by actorId across all of that actor's sessions.
+export interface MemoryPort {
+  recordTurn(
+    sessionId: RuntimeSessionId,
+    actorId: ActorId,
+    turn: ConversationTurn,
+  ): Promise<Result<void, MemoryError>>;
+  getRecentTurns(
+    sessionId: RuntimeSessionId,
+    actorId: ActorId,
+    limit: number,
+  ): Promise<Result<readonly ConversationTurn[], MemoryError>>;
+  getPreferences(actorId: ActorId): Promise<Result<readonly CallerPreference[], MemoryError>>;
 }
 
 export interface SessionLock {

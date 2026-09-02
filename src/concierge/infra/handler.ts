@@ -8,6 +8,7 @@ import { parseCallerMessage } from "../domain/caller-message";
 import { parseRuntimeSessionId } from "../domain/runtime-session-id";
 import { respondToCallerMessage } from "../usecase/respond-to-caller-message";
 import { buildConciergePorts } from "./composition-root";
+import { PLACEHOLDER_ACTOR_ID } from "./placeholder-actor-id";
 
 const ports = buildConciergePorts();
 
@@ -27,7 +28,7 @@ export const app = new BedrockAgentCoreApp({
         return "I didn't catch that — could you say something?";
       }
 
-      const result = await respondToCallerMessage(ports, sessionId.value, message.value);
+      const result = await respondToCallerMessage(ports, sessionId.value, PLACEHOLDER_ACTOR_ID, message.value);
       if (!result.ok) {
         // A ModelError is an expected, recoverable failure — surface a safe
         // message to the Caller, not the raw (possibly sensitive) SDK detail.

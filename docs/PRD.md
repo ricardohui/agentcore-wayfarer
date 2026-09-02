@@ -60,6 +60,26 @@ test (there is no deployed AWS state to assert against pre-deploy).
 
 Source: issue #15, acceptance criterion 5.
 
+## REQ-MEMORY-001 — Scratch state is session-scoped, not cross-session
+
+The Concierge's per-turn transcript is held via Memory's create_event/get_last_k_turns
+(session-scoped, actorId-scoped), not an ad hoc in-process cache: a fresh
+`runtimeSessionId` sees no prior turns, even for an actorId with turns recorded under a
+different session. Cross-session in-progress-trip resumption is explicitly not
+implemented.
+
+Source: issue #16, acceptance criteria 1 and 4.
+
+## REQ-MEMORY-002 — A returning actor is recognized by previously extracted preferences
+
+Two long-term Memory Strategies (`user-preference` for stable facts, `semantic` for
+soft free-form ones) are configured on the Memory resource. Before generating a reply,
+the Concierge recalls whatever those Strategies have already extracted for the
+requesting actorId and folds it into the model's context, so a second session for the
+same actorId can reflect a preference extracted from an earlier one.
+
+Source: issue #16, acceptance criteria 2, 3, and 5.
+
 ## Changelog
 
 - 2026-08-28 — Added REQ-RUNTIME-001, REQ-RUNTIME-002, REQ-RUNTIME-003 for the Runtime
@@ -67,3 +87,9 @@ Source: issue #15, acceptance criterion 5.
 - 2026-08-28 — Added REQ-GATEWAY-001 through REQ-GATEWAY-004 for Gateway's booking
   target (issue #15): search/hold tool contracts, the search-then-hold vertical slice,
   and CDK provisioning of the mock Lambda + Gateway target.
+- 2026-09-01 — Added REQ-MEMORY-001 and REQ-MEMORY-002 for Memory's scratch state and
+  long-term preference recall (issue #16). The Runtime walking skeleton's in-memory
+  `ConversationRepository`/`InMemoryConversationRepository` placeholder (issue #14) is
+  removed, replaced by a real `MemoryPort`/`AgentCoreMemoryAdapter` backed by
+  create_event/get_last_k_turns/RetrieveMemoryRecords — REQ-RUNTIME-002 continues to
+  hold, now backed by Memory's session scoping rather than an in-process Map.

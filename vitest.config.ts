@@ -9,6 +9,9 @@ export default defineConfig({
       // Gateway adapter (it's constructed eagerly at module load, but the
       // acceptance harness only mocks the network boundaries it exercises).
       GATEWAY_URL: "https://test-gateway.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp",
+      // Composition-root default for the Memory adapter (issue #16) — like
+      // GATEWAY_URL above, only exercised where a test mocks its network boundary.
+      MEMORY_ID: "test-memory-id",
       // SigV4 signing needs *some* resolvable credentials to compute a
       // signature — these never reach a real AWS endpoint in tests.
       AWS_ACCESS_KEY_ID: "test-access-key-id",
