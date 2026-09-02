@@ -62,7 +62,7 @@ export class BookingGatewayConstruct extends cdk.Resource {
     this.routerLambda.grantInvoke(gatewayRole);
 
     this.gateway = new agentcore.CfnGateway(this, "Gateway", {
-      name: "wayfarer_booking_gateway",
+      name: "wayfarer-booking-gateway",
       description: "Wayfarer booking Gateway - search and hold (issue #15)",
       roleArn: gatewayRole.roleArn,
       authorizerType: "AWS_IAM",
@@ -81,6 +81,11 @@ export class BookingGatewayConstruct extends cdk.Resource {
           },
         },
       },
+      // Required for every mcp.lambda/openApiSchema/smithyModel target, even
+      // though "lambda_iam" needs no separate credential provider — this is
+      // what tells Gateway to sign the Lambda invoke with its own role
+      // rather than looking up a stored credential.
+      credentialProviderConfigurations: [{ credentialProviderType: "GATEWAY_IAM_ROLE" }],
     });
   }
 }
