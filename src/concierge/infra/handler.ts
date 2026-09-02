@@ -7,15 +7,29 @@ import { z } from "zod";
 import { parseCallerMessage } from "../domain/caller-message";
 import { parseRuntimeSessionId } from "../domain/runtime-session-id";
 import { respondToCallerMessage } from "../usecase/respond-to-caller-message";
-import { buildConciergePorts } from "./composition-root";
-import { PLACEHOLDER_ACTOR_ID } from "./placeholder-actor-id";
+import { buildConciergePorts, buildJwtVerifier } from "./composition-root";
 
 const ports = buildConciergePorts();
+const jwtVerifier = buildJwtVerifier();
 
 export const app = new BedrockAgentCoreApp({
   invocationHandler: {
     requestSchema: z.object({ message: z.string() }),
     process: async (request, context) => {
+      // Inbound auth (issue #17): AgentCore Runtime's platform-level JWT
+      // authorizer rejects a missing/invalid token before this ever runs in
+      // production — this check is both defense-in-depth and the only layer
+      // the local invocation server (and this repo's tests) can exercise.
+      const authenticated = await jwtVerifier.verify(context.headers.authorization);
+      if (!authenticated.ok) {
+        // An expected, recoverable failure — same treatment as ModelError
+        // below, not a thrown crash: log the (possibly sensitive) detail
+        // server-side, return a safe message, never call the usecase.
+        context.log.warn({ authenticationError: authenticated.error }, "inbound authentication failed");
+        return "You need to be signed in to talk to me — please try again with a valid session.";
+      }
+      const actorId = authenticated.value;
+
       const sessionId = parseRuntimeSessionId(context.sessionId);
       if (!sessionId.ok) {
         // AgentCore Runtime guarantees a >=33 char session id on every invocation —
@@ -28,7 +42,7 @@ export const app = new BedrockAgentCoreApp({
         return "I didn't catch that — could you say something?";
       }
 
-      const result = await respondToCallerMessage(ports, sessionId.value, PLACEHOLDER_ACTOR_ID, message.value);
+      const result = await respondToCallerMessage(ports, sessionId.value, actorId, message.value);
       if (!result.ok) {
         // A ModelError is an expected, recoverable failure — surface a safe
         // message to the Caller, not the raw (possibly sensitive) SDK detail.

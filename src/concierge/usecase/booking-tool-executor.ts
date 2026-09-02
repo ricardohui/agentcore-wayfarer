@@ -4,20 +4,13 @@ import type { HotelCandidate } from "../domain/hotel-candidate";
 import { parseNonBlankId } from "../domain/non-blank-id";
 import { parseScenarioCity } from "../domain/scenario-city";
 import type { BookingGatewayPort, ToolCall, ToolCallResult, ToolExecutor } from "./ports";
+import { toolError, toolSuccess } from "./tool-call-result";
 
-const BOOKING_TOOL_NAMES = ["search-flights", "search-hotels", "hold-flight", "hold-hotel"] as const;
+export const BOOKING_TOOL_NAMES = ["search-flights", "search-hotels", "hold-flight", "hold-hotel"] as const;
 type BookingToolName = (typeof BOOKING_TOOL_NAMES)[number];
 
 function isBookingToolName(name: string): name is BookingToolName {
   return (BOOKING_TOOL_NAMES as readonly string[]).includes(name);
-}
-
-function toolError(toolUseId: string, message: string): ToolCallResult {
-  return { toolUseId, isError: true, content: { error: message } };
-}
-
-function toolSuccess(toolUseId: string, content: unknown): ToolCallResult {
-  return { toolUseId, isError: false, content };
 }
 
 function serializeFlightCandidate(candidate: FlightCandidate) {

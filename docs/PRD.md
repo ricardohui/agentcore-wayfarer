@@ -80,6 +80,70 @@ same actorId can reflect a preference extracted from an earlier one.
 
 Source: issue #16, acceptance criteria 2, 3, and 5.
 
+## REQ-IDENTITY-001 — Unauthenticated or invalid-JWT requests are rejected before the usecase runs
+
+A request with no Authorization header, or one carrying an invalid-signature, wrong-audience, or
+expired JWT, never reaches `respondToCallerMessage` — the model client and every other usecase
+port are left uncalled. AgentCore Runtime's own platform-level JWT authorizer enforces this in
+production; the Concierge's own `CognitoJwtVerifier` check in `infra/handler.ts` is
+defense-in-depth and the only layer this repo's tests can exercise directly.
+
+Source: issue #17, acceptance criterion 1.
+
+## REQ-IDENTITY-002 — actorId is the Caller's Cognito `sub`
+
+A valid Cognito-issued JWT's `sub` claim becomes the session's actorId, replacing issue #16's
+`PLACEHOLDER_ACTOR_ID` (now removed). Memory's Strategies (REQ-MEMORY-002) key off this same
+actorId, so a returning Caller's long-term preferences are recalled by their real inbound identity.
+
+Source: issue #17, acceptance criterion 2.
+
+## REQ-IDENTITY-003 — A calendar write with no Delegated credential surfaces an authorization URL
+
+The Concierge's first `write-calendar-event` tool call for a Caller who hasn't yet consented fails
+with a ConsentRequired result carrying an authorizationUrl, which the model surfaces to the Caller
+mid-conversation instead of a raw error.
+
+Source: issue #17, acceptance criterion 3.
+
+## REQ-IDENTITY-004 — A retried calendar write succeeds once consent is on file
+
+Once Identity's token vault holds a Delegated credential (out-of-band Caller approval), a retried
+`write-calendar-event` call for the same holdId succeeds and the mock calendar-events store holds
+a record referencing that holdId and title.
+
+Source: issue #17, acceptance criterion 4.
+
+## REQ-IDENTITY-005 — The consent handshake happens at most once per Caller per external target
+
+A second calendar write in the same or a later session, for a Caller who has already consented,
+does not surface an authorization URL again — Identity's token vault answers with an access token
+immediately.
+
+Source: issue #17, acceptance criterion 5.
+
+## REQ-IDENTITY-006 — The consent-then-retry flow is driven through the real Runtime entry point
+
+An acceptance test drives the full first-attempt-fails / approve / retry-succeeds sequence through
+the real `/invocations` entry point, with only the network boundary (Identity's GetResourceOauth2Token
+call and the mock calendar-events HTTP API) mocked.
+
+Source: issue #17, acceptance criterion 6.
+
+## REQ-IDENTITY-007 — Identity's infrastructure is fully CDK-provisioned
+
+The Cognito user pool + app client (Runtime's inbound JWT authorizer), the mock OAuth2
+authorization server Lambda (`/authorize`, `/token`, `/events`) behind a Function URL, its
+DynamoDB-backed store, its two Secrets Manager secrets (client secret, token signing key), and the
+`OAuth2CredentialProvider` registering it as a custom vendor are all provisioned by CDK — no
+console or bare-CLI provisioning. Verified by `cdk synth` succeeding, not an automated test, same
+as REQ-GATEWAY-004.
+
+Source: issue #17, acceptance criterion 7 (integration-test coverage of JWT expiry/invalid-signature
+and OAuth2 token refresh/expiry is exercised directly against the authorization server Lambda's
+router, `tests/calendar-oauth-server/infra/router.spec.ts`, and against `CognitoJwtVerifier`,
+`tests/concierge/adapter/cognito-jwt-verifier.spec.ts`).
+
 ## Changelog
 
 - 2026-08-28 — Added REQ-RUNTIME-001, REQ-RUNTIME-002, REQ-RUNTIME-003 for the Runtime
@@ -93,3 +157,9 @@ Source: issue #16, acceptance criteria 2, 3, and 5.
   removed, replaced by a real `MemoryPort`/`AgentCoreMemoryAdapter` backed by
   create_event/get_last_k_turns/RetrieveMemoryRecords — REQ-RUNTIME-002 continues to
   hold, now backed by Memory's session scoping rather than an in-process Map.
+- 2026-09-01 — Added REQ-IDENTITY-001 through REQ-IDENTITY-007 for Cognito inbound auth and the
+  delegated calendar consent handshake (issue #17). Issue #16's `PLACEHOLDER_ACTOR_ID` is removed;
+  actorId is now derived from the inbound JWT's `sub` claim on every invocation
+  (`CognitoJwtVerifier`, `infra/handler.ts`). A new Concierge-owned `write-calendar-event` tool
+  (not a Gateway target) is dispatched via a `CompositeToolExecutor` alongside issue #15's booking
+  tools.

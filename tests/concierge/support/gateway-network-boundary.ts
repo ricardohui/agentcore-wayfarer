@@ -1,5 +1,5 @@
 import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
-import { getGlobalDispatcher, MockAgent, setGlobalDispatcher, type Dispatcher } from "undici";
+import type { MockAgent } from "undici";
 
 export const GATEWAY_URL = "https://test-gateway.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp";
 
@@ -12,25 +12,16 @@ type JsonRpcRequestBody = {
 
 export type MockToolResponse = { readonly content: unknown; readonly isError?: boolean };
 
-// The shared network-boundary harness for every test exercising the real
-// BookingGatewayAdapter: a real undici MockAgent intercepting the actual
-// SigV4-signed fetch calls the adapter's MCP transport makes, standing in
-// for AgentCore Gateway (which itself would forward tools/call to the mock
-// Lambda router).
+// Registers onto the shared NetworkBoundary's MockAgent, intercepting the
+// actual SigV4-signed fetch calls BookingGatewayAdapter's MCP transport
+// makes — standing in for AgentCore Gateway (which itself would forward
+// tools/call to the mock Lambda router).
 export class GatewayMockServer {
-  private readonly agent = new MockAgent();
-  private readonly previousDispatcher: Dispatcher;
   private readonly responsesByToolName = new Map<string, MockToolResponse>();
 
-  constructor() {
-    this.previousDispatcher = getGlobalDispatcher();
-    // Deliberately leave net connect enabled: only the gateway origin below
-    // is intercepted, so the acceptance harness's own calls to the local
-    // Concierge server still hit the real network.
-    setGlobalDispatcher(this.agent);
-
+  constructor(agent: MockAgent) {
     const url = new URL(GATEWAY_URL);
-    this.agent
+    agent
       .get(url.origin)
       .intercept({ path: url.pathname, method: "POST" })
       .reply(200, (opts) => this.handle(String(opts.body ?? "")), {
@@ -41,11 +32,6 @@ export class GatewayMockServer {
 
   respondToTool(toolName: string, response: MockToolResponse): void {
     this.responsesByToolName.set(toolName, response);
-  }
-
-  async close(): Promise<void> {
-    await this.agent.close();
-    setGlobalDispatcher(this.previousDispatcher);
   }
 
   private handle(rawBody: string): Record<string, unknown> {

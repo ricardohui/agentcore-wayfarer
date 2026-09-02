@@ -16,6 +16,15 @@ export default defineConfig({
       // signature — these never reach a real AWS endpoint in tests.
       AWS_ACCESS_KEY_ID: "test-access-key-id",
       AWS_SECRET_ACCESS_KEY: "test-secret-access-key",
+      // Inbound auth (issue #17) — composition-root default for the
+      // CognitoJwtVerifier, matched by tests/concierge/support/cognito-network-boundary.ts.
+      COGNITO_ISSUER: "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_testpool",
+      COGNITO_CLIENT_ID: "test-client-id",
+      // Identity's Delegated credential (issue #17) — composition-root default
+      // for the DelegatedCalendarAdapter, only exercised where a test mocks
+      // its network boundary.
+      CALENDAR_CREDENTIAL_PROVIDER_NAME: "wayfarer-calendar-oauth2",
+      CALENDAR_API_URL: "https://test-calendar.example.com",
     },
   },
 });

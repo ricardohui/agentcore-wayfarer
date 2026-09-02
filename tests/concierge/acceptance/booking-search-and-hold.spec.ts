@@ -8,36 +8,42 @@ import type { DocumentType } from "@smithy/types";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { app } from "../../../src/concierge/infra/handler";
 import { bedrockMock } from "../support/bedrock-network-boundary";
+import { CognitoMockServer } from "../support/cognito-network-boundary";
+import { aSessionId, closeConciergeApp, invoke, waitForHealthy } from "../support/concierge-test-server";
 import { GatewayMockServer } from "../support/gateway-network-boundary";
 import { memoryMock } from "../support/memory-network-boundary";
+import { NetworkBoundary } from "../support/network-boundary";
 
 const PORT = 41824;
 const BASE_URL = `http://127.0.0.1:${PORT}`;
-const SESSION_ID_HEADER = "x-amzn-bedrock-agentcore-runtime-session-id";
 
 describe("Booking search-and-hold vertical slice (REQ-GATEWAY-001, REQ-GATEWAY-002, REQ-GATEWAY-003)", () => {
+  let network: NetworkBoundary;
   let gateway: GatewayMockServer;
+  let cognito: CognitoMockServer;
 
   beforeAll(async () => {
     app.run({ port: PORT, host: "127.0.0.1" });
-    await waitForHealthy();
+    await waitForHealthy(BASE_URL);
   });
 
   afterAll(async () => {
-    await closeApp();
+    await closeConciergeApp(app);
   });
 
-  beforeEach(() => {
+  beforeEach(async () => {
     bedrockMock.reset();
     memoryMock.reset();
     memoryMock.on(CreateEventCommand).resolves({});
     memoryMock.on(ListEventsCommand).resolves({ events: [] });
     memoryMock.on(RetrieveMemoryRecordsCommand).resolves({ memoryRecordSummaries: [] });
-    gateway = new GatewayMockServer();
+    network = new NetworkBoundary();
+    gateway = new GatewayMockServer(network.agent);
+    cognito = await CognitoMockServer.register(network.agent);
   });
 
   afterEach(async () => {
-    await gateway.close();
+    await network.close();
   });
 
   it("searches and holds a flight and a hotel for a 3-city trip request, driven through the real Runtime entry point", async () => {
@@ -74,9 +80,15 @@ describe("Booking search-and-hold vertical slice (REQ-GATEWAY-001, REQ-GATEWAY-0
       )
       .resolvesOnce(aTextResponse("Your Tokyo flight and hotel are both held!"));
 
-    const reply = await invoke(aSessionId("booking"), "Plan me a trip to Tokyo and hold a flight and a hotel");
+    const token = await cognito.signToken();
+    const response = await invoke(
+      BASE_URL,
+      aSessionId("booking"),
+      "Plan me a trip to Tokyo and hold a flight and a hotel",
+      `Bearer ${token}`,
+    );
 
-    expect(reply).toBe("Your Tokyo flight and hotel are both held!");
+    expect(await response.text()).toBe("Your Tokyo flight and hotel are both held!");
   });
 });
 
@@ -89,37 +101,4 @@ function aToolUseResponse(toolUse: { toolUseId: string; name: string; input: Doc
 
 function aTextResponse(text: string) {
   return { output: { message: { role: "assistant" as const, content: [{ text }] } } };
-}
-
-function aSessionId(suffix: string): string {
-  return `acceptance-test-session-${suffix}`.padEnd(33, "-");
-}
-
-async function invoke(sessionId: string, message: string): Promise<string> {
-  const response = await fetch(`${BASE_URL}/invocations`, {
-    method: "POST",
-    headers: { "content-type": "application/json", [SESSION_ID_HEADER]: sessionId },
-    body: JSON.stringify({ message }),
-  });
-  return response.text();
-}
-
-async function waitForHealthy(): Promise<void> {
-  const deadline = Date.now() + 5000;
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(`${BASE_URL}/ping`);
-      if (response.ok) {
-        return;
-      }
-    } catch {
-      // server not accepting connections yet
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error("Concierge server did not become healthy in time");
-}
-
-function closeApp(): Promise<void> {
-  return (app as unknown as { _app: { close: () => Promise<void> } })._app.close();
 }

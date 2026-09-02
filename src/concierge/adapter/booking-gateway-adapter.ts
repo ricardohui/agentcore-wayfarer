@@ -62,7 +62,11 @@ export class BookingGatewayAdapter implements BookingGatewayPort {
   ): Promise<Result<unknown, GatewayError>> {
     const client = new Client(CLIENT_INFO);
     const transport = new StreamableHTTPClientTransport(new URL(this.gatewayUrl), {
-      fetch: this.fetch,
+      // FetchLike is pinned to undici's own Request/Response types (see
+      // sigv4-fetch.ts); the MCP SDK's own FetchLike declares itself against
+      // the ambient global fetch types instead — structurally the same
+      // function at runtime, just an upstream typing mismatch.
+      fetch: this.fetch as unknown as typeof fetch,
     });
 
     try {

@@ -1,11 +1,14 @@
 import type { ActorId } from "../domain/actor-id";
+import type { AuthenticationError } from "../domain/authentication-error";
+import type { CalendarEvent } from "../domain/calendar-event";
 import type { CallerMessage } from "../domain/caller-message";
 import type { CallerPreference } from "../domain/caller-preference";
 import type { ConciergeReply } from "../domain/concierge-reply";
 import type { ConversationTurn } from "../domain/conversation-turn";
+import type { DelegatedCredentialError } from "../domain/delegated-credential-error";
 import type { FlightCandidate, FlightCandidateId } from "../domain/flight-candidate";
 import type { GatewayError } from "../domain/gateway-error";
-import type { Hold } from "../domain/hold";
+import type { Hold, HoldId } from "../domain/hold";
 import type { HotelCandidate, HotelCandidateId } from "../domain/hotel-candidate";
 import type { MemoryError } from "../domain/memory-error";
 import type { Result } from "../domain/result";
@@ -65,6 +68,23 @@ export interface MemoryPort {
     limit: number,
   ): Promise<Result<readonly ConversationTurn[], MemoryError>>;
   getPreferences(actorId: ActorId): Promise<Result<readonly CallerPreference[], MemoryError>>;
+}
+
+// Inbound auth (issue #17): verifies the raw Authorization header on every
+// invocation and resolves the Caller's Cognito `sub` as ActorId. Called
+// directly from infra/handler.ts, ahead of respondToCallerMessage — an
+// unauthenticated or invalid-JWT request never reaches the usecase.
+export interface JwtVerifierPort {
+  verify(authorizationHeader: string | undefined): Promise<Result<ActorId, AuthenticationError>>;
+}
+
+// Identity's Delegated credential (issue #17 / ADR-0003): writes a calendar
+// event confirming a held booking. The real adapter fetches a Delegated
+// credential from AgentCore Identity's token vault for the current request's
+// workload identity — no consent yet on file surfaces as ConsentRequired,
+// carrying the authorizationUrl to show the Caller.
+export interface CalendarPort {
+  writeEvent(holdId: HoldId, title: string): Promise<Result<CalendarEvent, DelegatedCredentialError>>;
 }
 
 export interface SessionLock {

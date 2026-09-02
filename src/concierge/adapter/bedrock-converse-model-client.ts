@@ -13,21 +13,24 @@ import type { CallerPreference } from "../domain/caller-preference";
 import { parseConciergeReply, type ConciergeReply } from "../domain/concierge-reply";
 import type { ConversationTurn } from "../domain/conversation-turn";
 import { err, ok, type Result } from "../domain/result";
+import { CALENDAR_TOOL_DEFINITIONS } from "../usecase/calendar-tool-catalog";
 import type { ModelClient, ModelError, ToolCall, ToolExecutor } from "../usecase/ports";
 
 const MAX_OUTPUT_TOKENS = 1024;
 
-// A search-then-hold trip-planning turn is at most a handful of tool calls
-// (search-flights, search-hotels, hold-flight, hold-hotel); this bounds a
-// misbehaving model from looping forever instead of ever replying.
-const MAX_TOOL_USE_ROUNDS = 5;
+// A search-then-hold-then-calendar-write trip-planning turn is at most a
+// handful of tool calls (search-flights, hold-flight, search-hotels,
+// hold-hotel, write-calendar-event — issue #17); this bounds a misbehaving
+// model from looping forever instead of ever replying.
+const MAX_TOOL_USE_ROUNDS = 8;
 
 // The Concierge is the client-side tool-use loop (Harness's declarative
 // `agentcore_gateway` tool is the alternative, comparison-build path per
 // ADR-0002), so it declares this contract to the model itself, built from
-// the same BOOKING_TOOL_DEFINITIONS Gateway's own target enforces.
-const BOOKING_TOOL_CONFIG: ToolConfiguration = {
-  tools: BOOKING_TOOL_DEFINITIONS.map((definition) => ({
+// the same BOOKING_TOOL_DEFINITIONS Gateway's own target enforces, plus
+// issue #17's Concierge-owned calendar-write tool (not a Gateway target).
+const TOOL_CONFIG: ToolConfiguration = {
+  tools: [...BOOKING_TOOL_DEFINITIONS, ...CALENDAR_TOOL_DEFINITIONS].map((definition) => ({
     toolSpec: {
       name: definition.name,
       description: definition.description,
@@ -58,7 +61,7 @@ export class BedrockConverseModelClient implements ModelClient {
             modelId: this.modelId,
             messages,
             ...(system ? { system } : {}),
-            toolConfig: BOOKING_TOOL_CONFIG,
+            toolConfig: TOOL_CONFIG,
             inferenceConfig: { maxTokens: MAX_OUTPUT_TOKENS },
           }),
         );

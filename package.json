@@ -9,21 +9,27 @@
   "scripts": {
     "build:handler": "rm -rf dist/concierge && node scripts/build-handler.mjs",
     "build:booking-gateway": "rm -rf dist/booking-gateway && node scripts/build-booking-gateway-handler.mjs",
+    "build:calendar-oauth-server": "rm -rf dist/calendar-oauth-server && node scripts/build-calendar-oauth-handler.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "cdk": "cdk",
-    "deploy": "npm run build:handler && npm run build:booking-gateway && cdk deploy --app \"npx ts-node --prefer-ts-exts infra/cdk/bin/app.ts\""
+    "deploy": "npm run build:handler && npm run build:booking-gateway && npm run build:calendar-oauth-server && cdk deploy --app \"npx ts-node --prefer-ts-exts infra/cdk/bin/app.ts\""
   },
   "dependencies": {
     "@aws-crypto/sha256-js": "^5.2.0",
     "@aws-sdk/client-bedrock-agentcore": "^3.1120.0",
     "@aws-sdk/client-bedrock-runtime": "^3.1120.0",
+    "@aws-sdk/client-dynamodb": "^3.1120.0",
+    "@aws-sdk/client-secrets-manager": "^3.1120.0",
     "@aws-sdk/credential-provider-node": "^3.972.81",
+    "@aws-sdk/lib-dynamodb": "^3.1120.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@smithy/protocol-http": "^5.6.2",
     "@smithy/signature-v4": "^5.7.3",
     "bedrock-agentcore": "^0.4.3",
+    "jose": "^6.2.10",
+    "undici": "^8.10.0",
     "zod": "^4.1.13"
   },
   "devDependencies": {
@@ -36,7 +42,6 @@
     "esbuild": "^0.24.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.6.3",
-    "undici": "^8.10.0",
     "vitest": "^2.1.4"
   }
 }

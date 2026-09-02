@@ -4,31 +4,42 @@ import {
   RetrieveMemoryRecordsCommand,
 } from "@aws-sdk/client-bedrock-agentcore";
 import { ConverseCommand, ThrottlingException } from "@aws-sdk/client-bedrock-runtime";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { app } from "../../../src/concierge/infra/handler";
 import { bedrockMock } from "../support/bedrock-network-boundary";
+import { CognitoMockServer } from "../support/cognito-network-boundary";
+import { aSessionId, closeConciergeApp, invoke, waitForHealthy } from "../support/concierge-test-server";
 import { memoryMock } from "../support/memory-network-boundary";
+import { NetworkBoundary } from "../support/network-boundary";
 
 const PORT = 41823;
 const BASE_URL = `http://127.0.0.1:${PORT}`;
-const SESSION_ID_HEADER = "x-amzn-bedrock-agentcore-runtime-session-id";
 
 describe("Concierge round trip (REQ-RUNTIME-001, REQ-RUNTIME-002, REQ-RUNTIME-003)", () => {
+  let network: NetworkBoundary;
+  let cognito: CognitoMockServer;
+
   beforeAll(async () => {
     app.run({ port: PORT, host: "127.0.0.1" });
-    await waitForHealthy();
+    await waitForHealthy(BASE_URL);
   });
 
   afterAll(async () => {
-    await closeApp();
+    await closeConciergeApp(app);
   });
 
-  beforeEach(() => {
+  beforeEach(async () => {
     bedrockMock.reset();
     memoryMock.reset();
     memoryMock.on(CreateEventCommand).resolves({});
     memoryMock.on(ListEventsCommand).resolves({ events: [] });
     memoryMock.on(RetrieveMemoryRecordsCommand).resolves({ memoryRecordSummaries: [] });
+    network = new NetworkBoundary();
+    cognito = await CognitoMockServer.register(network.agent);
+  });
+
+  afterEach(async () => {
+    await network.close();
   });
 
   it("passes its health check", async () => {
@@ -42,9 +53,38 @@ describe("Concierge round trip (REQ-RUNTIME-001, REQ-RUNTIME-002, REQ-RUNTIME-00
   it("answers a Caller message through the real entry point (REQ-RUNTIME-001, REQ-RUNTIME-003)", async () => {
     bedrockMock.on(ConverseCommand).resolves(aConverseResponse("Let's plan your trip!"));
 
-    const reply = await invoke(aSessionId("round-trip"), "Plan me a trip to Tokyo");
+    const token = await cognito.signToken();
+    const response = await invoke(BASE_URL, aSessionId("round-trip"), "Plan me a trip to Tokyo", `Bearer ${token}`);
 
-    expect(reply).toBe("Let's plan your trip!");
+    expect(await response.text()).toBe("Let's plan your trip!");
+  });
+
+  it("rejects a request with no Authorization header before reaching the usecase (REQ-IDENTITY-001)", async () => {
+    const response = await fetch(`${BASE_URL}/invocations`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-amzn-bedrock-agentcore-runtime-session-id": aSessionId("unauth") },
+      body: JSON.stringify({ message: "Plan me a trip to Tokyo" }),
+    });
+
+    // An unauthenticated request is an expected, recoverable failure (like a
+    // malformed message) — a safe reply, not a thrown 500 — but the usecase
+    // (and therefore the model) is never reached.
+    expect(response.status).toBe(200);
+    expect(await response.text()).not.toBe("Let's plan your trip!");
+    expect(bedrockMock.calls()).toHaveLength(0);
+  });
+
+  it("rejects a request with an invalid-signature token before reaching the usecase (REQ-IDENTITY-001)", async () => {
+    const response = await invoke(
+      BASE_URL,
+      aSessionId("bad-token"),
+      "Plan me a trip to Tokyo",
+      "Bearer not-a-real-jwt",
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).not.toBe("Let's plan your trip!");
+    expect(bedrockMock.calls()).toHaveLength(0);
   });
 
   it("keeps two Runtime sessions isolated (REQ-RUNTIME-002, REQ-MEMORY-001)", async () => {
@@ -72,10 +112,11 @@ describe("Concierge round trip (REQ-RUNTIME-001, REQ-RUNTIME-002, REQ-RUNTIME-00
       return aConverseResponse(`turns-seen:${turnsSeenByModel}`);
     });
 
-    await invoke(sessionAId, "I only exist in session A");
-    const replyToSessionB = await invoke(aSessionId("session-b"), "What did I say before?");
+    const token = await cognito.signToken();
+    await invoke(BASE_URL, sessionAId, "I only exist in session A", `Bearer ${token}`);
+    const replyToSessionB = await invoke(BASE_URL, aSessionId("session-b"), "What did I say before?", `Bearer ${token}`);
 
-    expect(replyToSessionB).toBe("turns-seen:1");
+    expect(await replyToSessionB.text()).toBe("turns-seen:1");
   });
 
   it("returns a safe message when the model client fails, without leaking internal error detail", async () => {
@@ -83,11 +124,8 @@ describe("Concierge round trip (REQ-RUNTIME-001, REQ-RUNTIME-002, REQ-RUNTIME-00
       .on(ConverseCommand)
       .rejects(new ThrottlingException({ message: "internal throttling detail", $metadata: {} }));
 
-    const response = await fetch(`${BASE_URL}/invocations`, {
-      method: "POST",
-      headers: { "content-type": "application/json", [SESSION_ID_HEADER]: aSessionId("model-down") },
-      body: JSON.stringify({ message: "Plan me a trip to Tokyo" }),
-    });
+    const token = await cognito.signToken();
+    const response = await invoke(BASE_URL, aSessionId("model-down"), "Plan me a trip to Tokyo", `Bearer ${token}`);
     const reply = await response.text();
 
     expect(response.status).toBe(200);
@@ -97,40 +135,4 @@ describe("Concierge round trip (REQ-RUNTIME-001, REQ-RUNTIME-002, REQ-RUNTIME-00
 
 function aConverseResponse(text: string) {
   return { output: { message: { role: "assistant" as const, content: [{ text }] } } };
-}
-
-function aSessionId(suffix: string): string {
-  return `acceptance-test-session-${suffix}`.padEnd(33, "-");
-}
-
-async function invoke(sessionId: string, message: string): Promise<string> {
-  const response = await fetch(`${BASE_URL}/invocations`, {
-    method: "POST",
-    headers: { "content-type": "application/json", [SESSION_ID_HEADER]: sessionId },
-    body: JSON.stringify({ message }),
-  });
-  return response.text();
-}
-
-async function waitForHealthy(): Promise<void> {
-  const deadline = Date.now() + 5000;
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(`${BASE_URL}/ping`);
-      if (response.ok) {
-        return;
-      }
-    } catch {
-      // server not accepting connections yet
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error("Concierge server did not become healthy in time");
-}
-
-// bedrock-agentcore@0.4.3 exposes no public stop()/close() — reach into the
-// underlying Fastify instance (its documented internal field is named `_app`)
-// to tear the server down between test files.
-function closeApp(): Promise<void> {
-  return (app as unknown as { _app: { close: () => Promise<void> } })._app.close();
 }
