@@ -20,14 +20,18 @@ describe("BookingToolExecutor", () => {
     expect(result).toEqual({
       toolUseId: "call-1",
       isError: false,
-      content: [
-        {
-          candidateId: "flight-1",
-          destination: "TOKYO",
-          airline: "ANA",
-          price: { amount: 82000, currency: "JPY" },
-        },
-      ],
+      // Nested under `candidates`, not a bare array — Bedrock's Converse API
+      // requires toolResult.content[0].json to be a JSON object.
+      content: {
+        candidates: [
+          {
+            candidateId: "flight-1",
+            destination: "TOKYO",
+            airline: "ANA",
+            price: { amount: 82000, currency: "JPY" },
+          },
+        ],
+      },
     });
   });
 
@@ -44,14 +48,16 @@ describe("BookingToolExecutor", () => {
 
     expect(port.receivedSearchHotelsCities).toEqual(["TOKYO"]);
     expect(result.isError).toBe(false);
-    expect(result.content).toEqual([
-      {
-        candidateId: "hotel-1",
-        city: "TOKYO",
-        hotelName: "Park Hyatt Tokyo",
-        price: { amount: 45000, currency: "JPY" },
-      },
-    ]);
+    expect(result.content).toEqual({
+      candidates: [
+        {
+          candidateId: "hotel-1",
+          city: "TOKYO",
+          hotelName: "Park Hyatt Tokyo",
+          price: { amount: 45000, currency: "JPY" },
+        },
+      ],
+    });
   });
 
   it("dispatches a hold-flight call to the port and serializes the hold", async () => {

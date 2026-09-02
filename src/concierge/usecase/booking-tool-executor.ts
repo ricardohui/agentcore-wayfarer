@@ -77,7 +77,9 @@ export class BookingToolExecutor implements ToolExecutor {
     if (!result.ok) {
       return toolError(toolUseId, result.error.message);
     }
-    return toolSuccess(toolUseId, result.value.map(serializeFlightCandidate));
+    // Bedrock's Converse API requires toolResult.content[0].json to be a JSON
+    // object, not a bare array — candidates must be nested under a key.
+    return toolSuccess(toolUseId, { candidates: result.value.map(serializeFlightCandidate) });
   }
 
   private async searchHotels(toolUseId: string, input: Record<string, unknown>): Promise<ToolCallResult> {
@@ -90,7 +92,7 @@ export class BookingToolExecutor implements ToolExecutor {
     if (!result.ok) {
       return toolError(toolUseId, result.error.message);
     }
-    return toolSuccess(toolUseId, result.value.map(serializeHotelCandidate));
+    return toolSuccess(toolUseId, { candidates: result.value.map(serializeHotelCandidate) });
   }
 
   private async holdFlight(toolUseId: string, input: Record<string, unknown>): Promise<ToolCallResult> {
