@@ -61,6 +61,13 @@ export class IdentityConstruct extends cdk.Resource {
       timeToLiveAttribute: "ttl",
     });
 
+    const calendarLambdaEnvironment: Record<string, string> = {
+      TABLE_NAME: table.tableName,
+      CLIENT_ID: CALENDAR_OAUTH_CLIENT_ID,
+      CLIENT_SECRET_ARN: clientSecret.secretArn,
+      SIGNING_SECRET_ARN: signingSecret.secretArn,
+    };
+
     this.calendarLambda = new lambda.Function(this, "CalendarOAuthLambda", {
       functionName: "wayfarer-calendar-oauth-server",
       description: "Wayfarer mock calendar OAuth2 authorization server + events store (issue #17 / ADR-0003)",
@@ -68,16 +75,7 @@ export class IdentityConstruct extends cdk.Resource {
       handler: "app.handler",
       code: lambda.Code.fromAsset(CALENDAR_LAMBDA_BUNDLE_DIR),
       timeout: cdk.Duration.seconds(10),
-      environment: {
-        TABLE_NAME: table.tableName,
-        CLIENT_ID: CALENDAR_OAUTH_CLIENT_ID,
-        CLIENT_SECRET_ARN: clientSecret.secretArn,
-        SIGNING_SECRET_ARN: signingSecret.secretArn,
-        // The issuer/audience a token is minted and verified against — this
-        // Lambda never actually receives inbound traffic at this exact URL
-        // pre-deploy, it's only ever compared against itself.
-        ISSUER: "https://wayfarer-calendar-oauth.internal",
-      },
+      environment: calendarLambdaEnvironment,
     });
     table.grantReadWriteData(this.calendarLambda);
     clientSecret.grantRead(this.calendarLambda);
@@ -92,7 +90,12 @@ export class IdentityConstruct extends cdk.Resource {
       clientId: CALENDAR_OAUTH_CLIENT_ID,
       clientSecret: cdk.SecretValue.secretsManager(clientSecret.secretArn),
       authorizationServerMetadata: {
-        issuer: "https://wayfarer-calendar-oauth.internal",
+        // AgentCore Identity rejects an issuer that doesn't resolve (a
+        // fictitious ".internal" host fails CreateOauth2CredentialProvider
+        // with "Issuer is not a valid URL"), so the issuer is the same real,
+        // resolvable Function URL host as the endpoints below rather than a
+        // placeholder domain.
+        issuer: this.calendarFunctionUrl.url,
         authorizationEndpoint: `${this.calendarFunctionUrl.url}authorize`,
         tokenEndpoint: `${this.calendarFunctionUrl.url}token`,
       },
@@ -106,7 +109,46 @@ export class IdentityConstruct extends cdk.Resource {
     if (!this.credentialProvider.callbackUrl) {
       throw new Error("OAuth2CredentialProvider did not produce a callbackUrl");
     }
-    this.calendarLambda.addEnvironment("EXPECTED_REDIRECT_URI", this.credentialProvider.callbackUrl);
+    // Setting this via calendarLambda.addEnvironment() would put a reference
+    // to credentialProvider on the Lambda's own CFN properties. The
+    // credential provider's authorizationServerMetadata already references
+    // calendarFunctionUrl (which depends on the Lambda), so that would close
+    // a cycle: Lambda -> CredentialProvider -> FunctionUrl -> Lambda. An
+    // AwsCustomResource depends on both without either depending on it back.
+    const setRedirectUriEnv = new cr.AwsCustomResource(this, "CalendarOAuthRedirectUriEnv", {
+      onCreate: {
+        service: "Lambda",
+        action: "updateFunctionConfiguration",
+        parameters: {
+          FunctionName: this.calendarLambda.functionName,
+          Environment: {
+            Variables: {
+              ...calendarLambdaEnvironment,
+              ISSUER: this.calendarFunctionUrl.url,
+              EXPECTED_REDIRECT_URI: this.credentialProvider.callbackUrl,
+            },
+          },
+        },
+        physicalResourceId: cr.PhysicalResourceId.of("wayfarer-calendar-oauth-redirect-uri"),
+      },
+      onUpdate: {
+        service: "Lambda",
+        action: "updateFunctionConfiguration",
+        parameters: {
+          FunctionName: this.calendarLambda.functionName,
+          Environment: {
+            Variables: {
+              ...calendarLambdaEnvironment,
+              ISSUER: this.calendarFunctionUrl.url,
+              EXPECTED_REDIRECT_URI: this.credentialProvider.callbackUrl,
+            },
+          },
+        },
+        physicalResourceId: cr.PhysicalResourceId.of("wayfarer-calendar-oauth-redirect-uri"),
+      },
+      policy: cr.AwsCustomResourcePolicy.fromSdkCalls({ resources: [this.calendarLambda.functionArn] }),
+    });
+    setRedirectUriEnv.node.addDependency(this.calendarLambda);
   }
 
   private provisionTestUser(): secretsmanager.Secret {
