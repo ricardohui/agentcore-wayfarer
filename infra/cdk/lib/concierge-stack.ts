@@ -61,6 +61,10 @@ export class ConciergeStack extends cdk.Stack {
         this.identity.userPool,
         [this.identity.userPoolClient],
       ),
+      // AgentCore strips the Authorization header before invoking the
+      // container by default — CognitoJwtVerifier's defense-in-depth check
+      // (handler.ts) never sees a token without this (issue #17).
+      requestHeaderConfiguration: { allowlistedHeaders: ["Authorization"] },
       environmentVariables: {
         CONCIERGE_MODEL_ID,
         AWS_REGION: this.region,
