@@ -1,9 +1,11 @@
-import type { FlightCandidate } from "../domain/flight-candidate";
+import type { BudgetSnapshot } from "../domain/budget-snapshot";
+import type { FlightCandidate, FlightCandidateId } from "../domain/flight-candidate";
 import type { Hold } from "../domain/hold";
-import type { HotelCandidate } from "../domain/hotel-candidate";
+import type { HotelCandidate, HotelCandidateId } from "../domain/hotel-candidate";
 import { parseNonBlankId } from "../domain/non-blank-id";
+import type { RuntimeSessionId } from "../domain/runtime-session-id";
 import { parseScenarioCity } from "../domain/scenario-city";
-import type { BookingGatewayPort, ToolCall, ToolCallResult, ToolExecutor } from "./ports";
+import type { BookingGatewayPort, BudgetPort, ToolCall, ToolCallResult, ToolExecutor } from "./ports";
 import { toolError, toolSuccess } from "./tool-call-result";
 
 export const BOOKING_TOOL_NAMES = ["search-flights", "search-hotels", "hold-flight", "hold-hotel"] as const;
@@ -31,17 +33,33 @@ function serializeHotelCandidate(candidate: HotelCandidate) {
   };
 }
 
-function serializeHold(hold: Hold) {
-  return { holdId: hold.holdId, status: hold.status, expiresAt: hold.expiresAt.toISOString() };
+function serializeHold(hold: Hold, budget?: BudgetSnapshot) {
+  return {
+    holdId: hold.holdId,
+    status: hold.status,
+    expiresAt: hold.expiresAt.toISOString(),
+    ...(budget ? { budget: budget.toJSON() } : {}),
+  };
 }
 
 // Dispatches a model tool-use call to Gateway's booking target (issue #15),
 // translating between the model's untyped tool arguments and the
-// BookingGatewayPort's domain-typed methods.
+// BookingGatewayPort's domain-typed methods. Also bridges search results
+// into Code Interpreter's budget/currency math (issue #18): Gateway's
+// hold-flight/hold-hotel mock doesn't echo back the held item's price, so
+// this executor remembers each candidate it showed the model during a
+// search, keyed by candidateId, to recover the price/city/category a
+// successful hold needs to convert and record.
 export class BookingToolExecutor implements ToolExecutor {
-  constructor(private readonly bookingGateway: BookingGatewayPort) {}
+  private readonly flightCandidatesById = new Map<FlightCandidateId, FlightCandidate>();
+  private readonly hotelCandidatesById = new Map<HotelCandidateId, HotelCandidate>();
 
-  async execute(call: ToolCall): Promise<ToolCallResult> {
+  constructor(
+    private readonly bookingGateway: BookingGatewayPort,
+    private readonly budget: BudgetPort,
+  ) {}
+
+  async execute(call: ToolCall, sessionId: RuntimeSessionId): Promise<ToolCallResult> {
     if (!isBookingToolName(call.name)) {
       return toolError(call.toolUseId, `unknown tool: ${call.name}`);
     }
@@ -54,9 +72,9 @@ export class BookingToolExecutor implements ToolExecutor {
       case "search-hotels":
         return this.searchHotels(call.toolUseId, input);
       case "hold-flight":
-        return this.holdFlight(call.toolUseId, input);
+        return this.holdFlight(call.toolUseId, input, sessionId);
       case "hold-hotel":
-        return this.holdHotel(call.toolUseId, input);
+        return this.holdHotel(call.toolUseId, input, sessionId);
     }
   }
 
@@ -69,6 +87,9 @@ export class BookingToolExecutor implements ToolExecutor {
     const result = await this.bookingGateway.searchFlights(destination.value);
     if (!result.ok) {
       return toolError(toolUseId, result.error.message);
+    }
+    for (const candidate of result.value) {
+      this.flightCandidatesById.set(candidate.candidateId, candidate);
     }
     // Bedrock's Converse API requires toolResult.content[0].json to be a JSON
     // object, not a bare array — candidates must be nested under a key.
@@ -85,10 +106,17 @@ export class BookingToolExecutor implements ToolExecutor {
     if (!result.ok) {
       return toolError(toolUseId, result.error.message);
     }
+    for (const candidate of result.value) {
+      this.hotelCandidatesById.set(candidate.candidateId, candidate);
+    }
     return toolSuccess(toolUseId, { candidates: result.value.map(serializeHotelCandidate) });
   }
 
-  private async holdFlight(toolUseId: string, input: Record<string, unknown>): Promise<ToolCallResult> {
+  private async holdFlight(
+    toolUseId: string,
+    input: Record<string, unknown>,
+    sessionId: RuntimeSessionId,
+  ): Promise<ToolCallResult> {
     const candidateId = parseNonBlankId<"FlightCandidateId">("candidateId", String(input.candidateId ?? ""));
     if (!candidateId.ok) {
       return toolError(toolUseId, candidateId.error.message);
@@ -98,10 +126,20 @@ export class BookingToolExecutor implements ToolExecutor {
     if (!result.ok) {
       return toolError(toolUseId, result.error.message);
     }
-    return toolSuccess(toolUseId, serializeHold(result.value));
+
+    const candidate = this.flightCandidatesById.get(candidateId.value);
+    if (!candidate) {
+      return toolSuccess(toolUseId, serializeHold(result.value));
+    }
+    const budget = await this.budget.recordHold(sessionId, candidate.destination, "FLIGHT", candidate.price);
+    return toolSuccess(toolUseId, serializeHold(result.value, budget.ok ? budget.value : undefined));
   }
 
-  private async holdHotel(toolUseId: string, input: Record<string, unknown>): Promise<ToolCallResult> {
+  private async holdHotel(
+    toolUseId: string,
+    input: Record<string, unknown>,
+    sessionId: RuntimeSessionId,
+  ): Promise<ToolCallResult> {
     const candidateId = parseNonBlankId<"HotelCandidateId">("candidateId", String(input.candidateId ?? ""));
     if (!candidateId.ok) {
       return toolError(toolUseId, candidateId.error.message);
@@ -111,6 +149,12 @@ export class BookingToolExecutor implements ToolExecutor {
     if (!result.ok) {
       return toolError(toolUseId, result.error.message);
     }
-    return toolSuccess(toolUseId, serializeHold(result.value));
+
+    const candidate = this.hotelCandidatesById.get(candidateId.value);
+    if (!candidate) {
+      return toolSuccess(toolUseId, serializeHold(result.value));
+    }
+    const budget = await this.budget.recordHold(sessionId, candidate.city, "HOTEL", candidate.price);
+    return toolSuccess(toolUseId, serializeHold(result.value, budget.ok ? budget.value : undefined));
   }
 }

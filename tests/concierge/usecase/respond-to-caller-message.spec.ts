@@ -44,15 +44,18 @@ describe("respondToCallerMessage", () => {
     expect(memory.recordedTurns).toEqual([{ sessionId, actorId, turn: { message, reply } }]);
   });
 
-  it("passes the composition root's toolExecutor straight through to the model client", async () => {
+  it("passes the composition root's toolExecutor and the requesting session's id to the model client", async () => {
+    const sessionId = aRuntimeSessionId();
+
     await respondToCallerMessage(
       { modelClient, memory, sessionLock, toolExecutor },
-      aRuntimeSessionId(),
+      sessionId,
       anActorId(),
       aCallerMessage("Plan me a trip to Tokyo"),
     );
 
     expect(modelClient.receivedToolExecutors).toEqual([toolExecutor]);
+    expect(modelClient.receivedSessionIds).toEqual([sessionId]);
   });
 
   it("gives the model client only the requesting session's recent turns", async () => {
@@ -117,7 +120,7 @@ describe("respondToCallerMessage", () => {
     });
     let generateReplyCalls = 0;
     const slowModelClient: ModelClient = {
-      generateReply: async (_transcript, _message, _toolExecutor, _preferences) => {
+      generateReply: async (_transcript, _message, _toolExecutor, _preferences, _sessionId) => {
         generateReplyCalls += 1;
         return generateReplyCalls === 1 ? firstReplyPending : ok(aConciergeReply("second reply"));
       },

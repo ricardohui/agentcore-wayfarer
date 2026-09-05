@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CompositeToolExecutor } from "../../../src/concierge/usecase/composite-tool-executor";
 import type { ToolCall, ToolCallResult, ToolExecutor } from "../../../src/concierge/usecase/ports";
+import { aRuntimeSessionId } from "../support/object-mothers";
 
 class StubToolExecutor implements ToolExecutor {
   public receivedCalls: ToolCall[] = [];
@@ -21,7 +22,10 @@ describe("CompositeToolExecutor", () => {
       { toolNames: ["write-calendar-event"], executor: calendar },
     ]);
 
-    const result = await executor.execute({ toolUseId: "call-2", name: "write-calendar-event", input: {} });
+    const result = await executor.execute(
+      { toolUseId: "call-2", name: "write-calendar-event", input: {} },
+      aRuntimeSessionId(),
+    );
 
     expect(result).toEqual({ toolUseId: "call-2", isError: false, content: "calendar" });
     expect(booking.receivedCalls).toEqual([]);
@@ -32,7 +36,10 @@ describe("CompositeToolExecutor", () => {
     const booking = new StubToolExecutor({ toolUseId: "x", isError: false, content: "booking" });
     const executor = new CompositeToolExecutor([{ toolNames: ["search-flights"], executor: booking }]);
 
-    const result = await executor.execute({ toolUseId: "call-3", name: "unknown-tool", input: {} });
+    const result = await executor.execute(
+      { toolUseId: "call-3", name: "unknown-tool", input: {} },
+      aRuntimeSessionId(),
+    );
 
     expect(result).toEqual({
       toolUseId: "call-3",

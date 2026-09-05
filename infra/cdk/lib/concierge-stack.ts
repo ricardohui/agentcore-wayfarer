@@ -14,12 +14,23 @@ export class ConciergeStack extends cdk.Stack {
   public readonly bookingGateway: BookingGatewayConstruct;
   public readonly memory: agentcore.Memory;
   public readonly identity: IdentityConstruct;
+  public readonly codeInterpreter: agentcore.CodeInterpreterCustom;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
     this.bookingGateway = new BookingGatewayConstruct(this, "BookingGateway");
     this.identity = new IdentityConstruct(this, "Identity");
+
+    // Code Interpreter's budget/currency math (issue #18 / ADR-0004): Sandbox
+    // network mode (no internet egress) — the static mock rate table is
+    // embedded in the executed code, so the sandbox never needs to reach a
+    // real forex API.
+    this.codeInterpreter = new agentcore.CodeInterpreterCustom(this, "BudgetCodeInterpreter", {
+      codeInterpreterCustomName: "wayfarer_budget_interpreter",
+      description: "Wayfarer budget/currency math sandbox (issue #18 / ADR-0004)",
+      networkConfiguration: agentcore.CodeInterpreterNetworkConfiguration.usingSandboxNetwork(),
+    });
 
     // Long-term Strategies (issue #16): user-preference for stable facts
     // (home airport, seat/dietary prefs), semantic for soft free-form ones
@@ -74,6 +85,7 @@ export class ConciergeStack extends cdk.Stack {
         COGNITO_CLIENT_ID: this.identity.userPoolClient.userPoolClientId,
         CALENDAR_CREDENTIAL_PROVIDER_NAME: this.identity.credentialProviderName,
         CALENDAR_API_URL: this.identity.calendarFunctionUrl.url,
+        CODE_INTERPRETER_ID: this.codeInterpreter.codeInterpreterId,
       },
     });
 
@@ -100,6 +112,11 @@ export class ConciergeStack extends cdk.Stack {
     // vault on the Caller's behalf.
     this.identity.credentialProvider.grantUse(this.runtime.role);
 
+    // Code Interpreter's budget/currency math (issue #18): Start/Invoke/Stop
+    // on the sandbox the Runtime's own role uses to run each hold's
+    // conversion.
+    this.codeInterpreter.grantUse(this.runtime.role);
+
     new cdk.CfnOutput(this, "RuntimeArn", { value: this.runtime.agentRuntimeArn });
     new cdk.CfnOutput(this, "RuntimeId", { value: this.runtime.agentRuntimeId });
     new cdk.CfnOutput(this, "GatewayUrl", { value: this.bookingGateway.gateway.attrGatewayUrl });
@@ -111,5 +128,6 @@ export class ConciergeStack extends cdk.Stack {
       value: this.identity.testUserPasswordSecret.secretArn,
       description: "Retrieve the generated Cognito test user's password from this secret",
     });
+    new cdk.CfnOutput(this, "CodeInterpreterId", { value: this.codeInterpreter.codeInterpreterId });
   }
 }

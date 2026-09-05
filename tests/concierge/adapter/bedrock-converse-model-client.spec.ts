@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { BedrockConverseModelClient } from "../../../src/concierge/adapter/bedrock-converse-model-client";
 import { bedrockMock } from "../support/bedrock-network-boundary";
 import { FakeToolExecutor } from "../support/fakes";
-import { aCallerMessage, aCallerPreference } from "../support/object-mothers";
+import { aCallerMessage, aCallerPreference, aRuntimeSessionId } from "../support/object-mothers";
 
 const modelId = "openai.gpt-oss-120b-1:0";
 
@@ -21,7 +21,7 @@ describe("BedrockConverseModelClient", () => {
     });
     const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId);
 
-    const result = await client.generateReply([], aCallerMessage("Hi"), toolExecutor, []);
+    const result = await client.generateReply([], aCallerMessage("Hi"), toolExecutor, [], aRuntimeSessionId());
 
     expect(result).toEqual({ ok: true, value: "Hello traveler!" });
   });
@@ -32,7 +32,7 @@ describe("BedrockConverseModelClient", () => {
     });
     const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId);
 
-    await client.generateReply([], aCallerMessage("Hi"), toolExecutor, [aCallerPreference("home airport: NRT")]);
+    await client.generateReply([], aCallerMessage("Hi"), toolExecutor, [aCallerPreference("home airport: NRT")], aRuntimeSessionId());
 
     const calls = bedrockMock.commandCalls(ConverseCommand);
     expect(calls[0]?.args[0].input.system).toEqual([{ text: expect.stringContaining("home airport: NRT") }]);
@@ -44,7 +44,7 @@ describe("BedrockConverseModelClient", () => {
     });
     const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId);
 
-    await client.generateReply([], aCallerMessage("Hi"), toolExecutor, []);
+    await client.generateReply([], aCallerMessage("Hi"), toolExecutor, [], aRuntimeSessionId());
 
     const calls = bedrockMock.commandCalls(ConverseCommand);
     expect(calls[0]?.args[0].input.system).toBeUndefined();
@@ -56,7 +56,7 @@ describe("BedrockConverseModelClient", () => {
     });
     const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId);
 
-    await client.generateReply([], aCallerMessage("Hi"), toolExecutor, []);
+    await client.generateReply([], aCallerMessage("Hi"), toolExecutor, [], aRuntimeSessionId());
 
     const calls = bedrockMock.commandCalls(ConverseCommand);
     expect(calls).toHaveLength(1);
@@ -69,7 +69,7 @@ describe("BedrockConverseModelClient", () => {
     });
     const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId);
 
-    await client.generateReply([], aCallerMessage("Hi"), toolExecutor, []);
+    await client.generateReply([], aCallerMessage("Hi"), toolExecutor, [], aRuntimeSessionId());
 
     const calls = bedrockMock.commandCalls(ConverseCommand);
     const toolNames = calls[0]?.args[0].input.toolConfig?.tools?.map((tool) => tool.toolSpec?.name);
@@ -84,7 +84,7 @@ describe("BedrockConverseModelClient", () => {
     );
     const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId);
 
-    const result = await client.generateReply([], aCallerMessage("Hi"), toolExecutor, []);
+    const result = await client.generateReply([], aCallerMessage("Hi"), toolExecutor, [], aRuntimeSessionId());
 
     expect(result.ok).toBe(false);
     expect(!result.ok && result.error.type).toBe("ModelUnavailable");
@@ -104,7 +104,7 @@ describe("BedrockConverseModelClient", () => {
     });
     const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId);
 
-    const result = await client.generateReply([], aCallerMessage("Hi"), toolExecutor, []);
+    const result = await client.generateReply([], aCallerMessage("Hi"), toolExecutor, [], aRuntimeSessionId());
 
     expect(result).toEqual({ ok: true, value: "Hello traveler!" });
   });
@@ -115,7 +115,7 @@ describe("BedrockConverseModelClient", () => {
     });
     const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId);
 
-    const result = await client.generateReply([], aCallerMessage("Hi"), toolExecutor, []);
+    const result = await client.generateReply([], aCallerMessage("Hi"), toolExecutor, [], aRuntimeSessionId());
 
     expect(result).toEqual({
       ok: false,
@@ -141,7 +141,7 @@ describe("BedrockConverseModelClient", () => {
     toolExecutor.respondTo("call-1", { isError: false, content: [{ candidateId: "flight-1" }] });
     const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId);
 
-    const result = await client.generateReply([], aCallerMessage("Find me a flight to Tokyo"), toolExecutor, []);
+    const result = await client.generateReply([], aCallerMessage("Find me a flight to Tokyo"), toolExecutor, [], aRuntimeSessionId());
 
     expect(result).toEqual({ ok: true, value: "Found a flight for you!" });
     expect(toolExecutor.receivedCalls).toEqual([
@@ -184,7 +184,7 @@ describe("BedrockConverseModelClient", () => {
     toolExecutor.respondTo("call-2", { isError: false, content: [{ candidateId: "hotel-1" }] });
     const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId);
 
-    const result = await client.generateReply([], aCallerMessage("Plan my trip"), toolExecutor, []);
+    const result = await client.generateReply([], aCallerMessage("Plan my trip"), toolExecutor, [], aRuntimeSessionId());
 
     expect(result).toEqual({ ok: true, value: "Here are your options." });
     expect(toolExecutor.receivedCalls.map((call) => call.toolUseId)).toEqual(["call-1", "call-2"]);
@@ -208,7 +208,7 @@ describe("BedrockConverseModelClient", () => {
     toolExecutor.respondTo("call-1", { isError: true, content: { error: "candidate not found" } });
     const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId);
 
-    const result = await client.generateReply([], aCallerMessage("Hold that flight"), toolExecutor, []);
+    const result = await client.generateReply([], aCallerMessage("Hold that flight"), toolExecutor, [], aRuntimeSessionId());
 
     expect(result).toEqual({ ok: true, value: "That candidate is no longer available." });
     const secondCallMessages = bedrockMock.commandCalls(ConverseCommand)[1]?.args[0].input.messages ?? [];
@@ -241,7 +241,7 @@ describe("BedrockConverseModelClient", () => {
     toolExecutor.respondTo("call-1", { isError: true, content: { error: "unknown tool: " } });
     const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId);
 
-    const result = await client.generateReply([], aCallerMessage("Do something"), toolExecutor, []);
+    const result = await client.generateReply([], aCallerMessage("Do something"), toolExecutor, [], aRuntimeSessionId());
 
     expect(result).toEqual({ ok: true, value: "Handled." });
     expect(toolExecutor.receivedCalls).toEqual([{ toolUseId: "call-1", name: "", input: {} }]);
@@ -260,7 +260,7 @@ describe("BedrockConverseModelClient", () => {
     toolExecutor.respondTo("call-loop", { isError: false, content: [] });
     const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId);
 
-    const result = await client.generateReply([], aCallerMessage("Loop forever"), toolExecutor, []);
+    const result = await client.generateReply([], aCallerMessage("Loop forever"), toolExecutor, [], aRuntimeSessionId());
 
     expect(result).toEqual({
       ok: false,

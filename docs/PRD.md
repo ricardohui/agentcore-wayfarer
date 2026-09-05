@@ -144,6 +144,64 @@ and OAuth2 token refresh/expiry is exercised directly against the authorization 
 router, `tests/calendar-oauth-server/infra/router.spec.ts`, and against `CognitoJwtVerifier`,
 `tests/concierge/adapter/cognito-jwt-verifier.spec.ts`).
 
+## REQ-CODEINTERPRETER-001 — A single Code Interpreter session persists across a planning conversation
+
+One Sandbox-mode Code Interpreter session is started per RuntimeSessionId and reused for every
+subsequent hold in that conversation (`clearContext: false`) — a second, later hold in the same
+session does not start a new sandbox session.
+
+Source: issue #18, acceptance criterion 1.
+
+## REQ-CODEINTERPRETER-002 — Every successful hold triggers a real executeCode currency conversion
+
+A successful `hold-flight`/`hold-hotel` call converts the held candidate's Local price to Home
+currency (USD) via a real `executeCode` call against the static mock rate table (ADR-0004) — never
+model-guessed arithmetic. The conversion uses whichever candidate's price/city was last returned
+for that candidateId by `search-flights`/`search-hotels` in the same tool-executor instance.
+
+Source: issue #18, acceptance criterion 2.
+
+## REQ-CODEINTERPRETER-003 — The Running total accumulates correctly across multiple holds in different Local currencies
+
+Holding a flight and a hotel priced in two different Local currencies in the same conversation
+produces a Running total that is the sum of both items' Home-currency amounts, reflected in the
+`budget.runningTotal` field attached to each hold's tool result.
+
+Source: issue #18, acceptance criterion 3.
+
+## REQ-CODEINTERPRETER-004 — The Budget breakdown slices the Running total by city and by category
+
+Each hold's tool result also carries `budget.breakdownByCity` and `budget.breakdownByCategory`
+(flights vs hotels), recomputed alongside the Running total on every hold.
+
+Source: issue #18, acceptance criterion 4.
+
+## REQ-CODEINTERPRETER-005 — The budget flow is driven through the real Runtime entry point
+
+An acceptance test holds a flight and a hotel priced in different Local currencies through the real
+`/invocations` entry point, network boundary mocked (Gateway and Code Interpreter's
+Start/InvokeCodeInterpreter calls), and asserts the Running total and breakdown numbers surfaced to
+the model after each hold are numerically correct.
+
+Source: issue #18, acceptance criterion 5.
+
+## REQ-CODEINTERPRETER-006 — A Budget port failure never blocks a successful hold
+
+Per CONTEXT.md's Running total ("observational, not a constraint"), a `BudgetPort` failure
+(sandbox unavailable, execution failed) still returns the hold as successful — just without a
+`budget` field in that hold's tool result.
+
+Source: issue #18, acceptance criterion 6 (unit-tested via `BookingToolExecutor`'s in-memory
+`FakeBudgetPort`; sandbox timeout/error-translation edge cases are integration-tested directly
+against `CodeInterpreterBudgetAdapter`, `tests/concierge/adapter/code-interpreter-budget-adapter.spec.ts`).
+
+## REQ-CODEINTERPRETER-007 — Code Interpreter's infrastructure is fully CDK-provisioned
+
+A custom Code Interpreter resource in Sandbox network mode is provisioned by CDK
+(`CodeInterpreterCustom` / `AWS::BedrockAgentCore::CodeInterpreterCustom`), with the Runtime's role
+granted Start/Invoke/Stop on it. Verified by `cdk synth` succeeding, not an automated test, same as
+REQ-GATEWAY-004 / REQ-IDENTITY-007.
+
 ## Changelog
 
 - 2026-08-28 — Added REQ-RUNTIME-001, REQ-RUNTIME-002, REQ-RUNTIME-003 for the Runtime
@@ -163,3 +221,10 @@ router, `tests/calendar-oauth-server/infra/router.spec.ts`, and against `Cognito
   (`CognitoJwtVerifier`, `infra/handler.ts`). A new Concierge-owned `write-calendar-event` tool
   (not a Gateway target) is dispatched via a `CompositeToolExecutor` alongside issue #15's booking
   tools.
+- 2026-09-05 — Added REQ-CODEINTERPRETER-001 through REQ-CODEINTERPRETER-007 for Code Interpreter's
+  budget/currency math (issue #18 / ADR-0004). `BookingToolExecutor` stays the same long-lived
+  singleton it always was (still wired once in composition-root.ts) and now caches each search's
+  candidates by candidateId, so a hold in the same or a later conversation turn can recover the
+  Local price/city/category to convert; `ToolExecutor.execute`/`ModelClient.generateReply` both
+  gained a `sessionId` parameter so Code Interpreter's per-conversation sandbox session can be keyed
+  by it without rebuilding the executor per call.

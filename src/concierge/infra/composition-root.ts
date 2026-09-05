@@ -2,6 +2,7 @@ import { BedrockAgentCoreClient } from "@aws-sdk/client-bedrock-agentcore";
 import { BedrockRuntimeClient } from "@aws-sdk/client-bedrock-runtime";
 import { AgentCoreMemoryAdapter } from "../adapter/agentcore-memory-adapter";
 import { BedrockConverseModelClient } from "../adapter/bedrock-converse-model-client";
+import { CodeInterpreterBudgetAdapter } from "../adapter/code-interpreter-budget-adapter";
 import { CognitoJwtVerifier } from "../adapter/cognito-jwt-verifier";
 import { BookingGatewayAdapter } from "../adapter/booking-gateway-adapter";
 import { DelegatedCalendarAdapter } from "../adapter/delegated-calendar-adapter";
@@ -24,6 +25,7 @@ export function buildConciergePorts(): RespondToCallerMessagePorts {
   const memoryId = requireEnv("MEMORY_ID");
   const calendarCredentialProviderName = requireEnv("CALENDAR_CREDENTIAL_PROVIDER_NAME");
   const calendarApiUrl = requireEnv("CALENDAR_API_URL");
+  const codeInterpreterId = requireEnv("CODE_INTERPRETER_ID");
 
   const bookingGateway = new BookingGatewayAdapter(
     gatewayUrl,
@@ -31,13 +33,14 @@ export function buildConciergePorts(): RespondToCallerMessagePorts {
   );
   const identityClient = new BedrockAgentCoreClient({ region });
   const calendar = new DelegatedCalendarAdapter(identityClient, calendarCredentialProviderName, calendarApiUrl);
+  const budget = new CodeInterpreterBudgetAdapter(identityClient, codeInterpreterId);
 
   return {
     modelClient: new BedrockConverseModelClient(new BedrockRuntimeClient({ region }), modelId),
     memory: new AgentCoreMemoryAdapter(identityClient, memoryId),
     sessionLock: new InMemorySessionLock(),
     toolExecutor: new CompositeToolExecutor([
-      { toolNames: BOOKING_TOOL_NAMES, executor: new BookingToolExecutor(bookingGateway) },
+      { toolNames: BOOKING_TOOL_NAMES, executor: new BookingToolExecutor(bookingGateway, budget) },
       { toolNames: CALENDAR_TOOL_NAMES, executor: new CalendarToolExecutor(calendar) },
     ]),
   };

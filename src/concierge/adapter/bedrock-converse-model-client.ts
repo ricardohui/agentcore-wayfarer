@@ -13,6 +13,7 @@ import type { CallerPreference } from "../domain/caller-preference";
 import { parseConciergeReply, type ConciergeReply } from "../domain/concierge-reply";
 import type { ConversationTurn } from "../domain/conversation-turn";
 import { err, ok, type Result } from "../domain/result";
+import type { RuntimeSessionId } from "../domain/runtime-session-id";
 import { CALENDAR_TOOL_DEFINITIONS } from "../usecase/calendar-tool-catalog";
 import type { ModelClient, ModelError, ToolCall, ToolExecutor } from "../usecase/ports";
 
@@ -50,6 +51,7 @@ export class BedrockConverseModelClient implements ModelClient {
     message: CallerMessage,
     toolExecutor: ToolExecutor,
     preferences: readonly CallerPreference[],
+    sessionId: RuntimeSessionId,
   ): Promise<Result<ConciergeReply, ModelError>> {
     const messages: Message[] = [...toBedrockMessages(transcript), toUserMessage(message)];
     const system = toSystemBlocks(preferences);
@@ -72,7 +74,7 @@ export class BedrockConverseModelClient implements ModelClient {
         }
 
         messages.push({ role: "assistant", content: response.output?.message?.content ?? [] });
-        messages.push(await toToolResultMessage(toolCalls, toolExecutor));
+        messages.push(await toToolResultMessage(toolCalls, toolExecutor, sessionId));
       }
 
       return err({ type: "InvalidResponse", message: "model exceeded the maximum tool-use rounds" });
@@ -121,8 +123,12 @@ function extractToolCalls(response: ConverseCommandOutput): ToolCall[] {
   return toolCalls;
 }
 
-async function toToolResultMessage(toolCalls: ToolCall[], toolExecutor: ToolExecutor): Promise<Message> {
-  const results = await Promise.all(toolCalls.map((call) => toolExecutor.execute(call)));
+async function toToolResultMessage(
+  toolCalls: ToolCall[],
+  toolExecutor: ToolExecutor,
+  sessionId: RuntimeSessionId,
+): Promise<Message> {
+  const results = await Promise.all(toolCalls.map((call) => toolExecutor.execute(call, sessionId)));
   return {
     role: "user",
     content: results.map((result) => ({

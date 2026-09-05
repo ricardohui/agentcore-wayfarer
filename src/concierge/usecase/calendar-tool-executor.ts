@@ -1,6 +1,7 @@
 import type { CalendarEvent } from "../domain/calendar-event";
 import type { HoldId } from "../domain/hold";
 import { parseNonBlankId } from "../domain/non-blank-id";
+import type { RuntimeSessionId } from "../domain/runtime-session-id";
 import { CALENDAR_TOOL_DEFINITIONS, type CalendarToolName } from "./calendar-tool-catalog";
 import type { CalendarPort, ToolCall, ToolCallResult, ToolExecutor } from "./ports";
 import { toolError, toolSuccess } from "./tool-call-result";
@@ -22,7 +23,7 @@ function serializeEvent(event: CalendarEvent) {
 export class CalendarToolExecutor implements ToolExecutor {
   constructor(private readonly calendar: CalendarPort) {}
 
-  async execute(call: ToolCall): Promise<ToolCallResult> {
+  async execute(call: ToolCall, _sessionId: RuntimeSessionId): Promise<ToolCallResult> {
     if (!isCalendarToolName(call.name)) {
       return toolError(call.toolUseId, `unknown tool: ${call.name}`);
     }

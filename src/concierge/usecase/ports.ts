@@ -1,5 +1,8 @@
 import type { ActorId } from "../domain/actor-id";
 import type { AuthenticationError } from "../domain/authentication-error";
+import type { BudgetCategory } from "../domain/budget-category";
+import type { BudgetError } from "../domain/budget-error";
+import type { BudgetSnapshot } from "../domain/budget-snapshot";
 import type { CalendarEvent } from "../domain/calendar-event";
 import type { CallerMessage } from "../domain/caller-message";
 import type { CallerPreference } from "../domain/caller-preference";
@@ -10,6 +13,7 @@ import type { FlightCandidate, FlightCandidateId } from "../domain/flight-candid
 import type { GatewayError } from "../domain/gateway-error";
 import type { Hold, HoldId } from "../domain/hold";
 import type { HotelCandidate, HotelCandidateId } from "../domain/hotel-candidate";
+import type { LocalPrice } from "../domain/local-price";
 import type { MemoryError } from "../domain/memory-error";
 import type { Result } from "../domain/result";
 import type { RuntimeSessionId } from "../domain/runtime-session-id";
@@ -30,7 +34,11 @@ export type ToolCallResult = {
 };
 
 export interface ToolExecutor {
-  execute(call: ToolCall): Promise<ToolCallResult>;
+  // sessionId (not carried on ToolCall itself, which mirrors the model's
+  // untyped tool-use block) lets a session-scoped concern — Code
+  // Interpreter's per-conversation budget sandbox (issue #18) — key its own
+  // state without every ToolExecutor needing to be rebuilt per call.
+  execute(call: ToolCall, sessionId: RuntimeSessionId): Promise<ToolCallResult>;
 }
 
 export interface ModelClient {
@@ -39,6 +47,7 @@ export interface ModelClient {
     message: CallerMessage,
     toolExecutor: ToolExecutor,
     preferences: readonly CallerPreference[],
+    sessionId: RuntimeSessionId,
   ): Promise<Result<ConciergeReply, ModelError>>;
 }
 
@@ -85,6 +94,23 @@ export interface JwtVerifierPort {
 // carrying the authorizationUrl to show the Caller.
 export interface CalendarPort {
   writeEvent(holdId: HoldId, title: string): Promise<Result<CalendarEvent, DelegatedCredentialError>>;
+}
+
+// Code Interpreter's budget/currency math (issue #18 / ADR-0004): converts a
+// held item's Local price to Home currency (USD) via a static mock rate
+// table executed in a sandboxed Code Interpreter session, and folds it into
+// the trip's Running total and Budget breakdown (CONTEXT.md). One sandbox
+// session persists per RuntimeSessionId — the real adapter reuses it across
+// every hold in the same planning conversation (clearContext: false), which
+// is what makes the Running total accumulate as the sandbox's own state
+// rather than something this port's caller has to track itself.
+export interface BudgetPort {
+  recordHold(
+    sessionId: RuntimeSessionId,
+    city: ScenarioCity,
+    category: BudgetCategory,
+    price: LocalPrice,
+  ): Promise<Result<BudgetSnapshot, BudgetError>>;
 }
 
 export interface SessionLock {

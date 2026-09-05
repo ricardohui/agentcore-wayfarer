@@ -1,10 +1,12 @@
 import { parseActorId, type ActorId } from "../../../src/concierge/domain/actor-id";
+import { BudgetSnapshot } from "../../../src/concierge/domain/budget-snapshot";
 import { parseCallerMessage, type CallerMessage } from "../../../src/concierge/domain/caller-message";
 import { parseCallerPreference, type CallerPreference } from "../../../src/concierge/domain/caller-preference";
 import { parseConciergeReply, type ConciergeReply } from "../../../src/concierge/domain/concierge-reply";
 import { FlightCandidate } from "../../../src/concierge/domain/flight-candidate";
 import { Hold } from "../../../src/concierge/domain/hold";
 import { HotelCandidate } from "../../../src/concierge/domain/hotel-candidate";
+import { LocalPrice } from "../../../src/concierge/domain/local-price";
 import { parseRuntimeSessionId, type RuntimeSessionId } from "../../../src/concierge/domain/runtime-session-id";
 import type { ScenarioCity } from "../../../src/concierge/domain/scenario-city";
 
@@ -73,6 +75,26 @@ export function aHold(overrides: { holdId?: string; expiresAt?: string } = {}): 
       holdId: overrides.holdId ?? "hold-1",
       status: "held",
       expiresAt: overrides.expiresAt ?? "2026-09-01T00:00:00.000Z",
+    }),
+  );
+}
+
+export function aLocalPrice(overrides: { amount?: number; currency?: string } = {}): LocalPrice {
+  return unwrap(LocalPrice.parse(overrides.amount ?? 82000, overrides.currency ?? "JPY"));
+}
+
+export function aBudgetSnapshot(
+  overrides: {
+    runningTotal?: number;
+    breakdownByCity?: Record<string, number>;
+    breakdownByCategory?: Record<string, number>;
+  } = {},
+): BudgetSnapshot {
+  return unwrap(
+    BudgetSnapshot.parse({
+      runningTotal: overrides.runningTotal ?? 549.4,
+      breakdownByCity: overrides.breakdownByCity ?? { TOKYO: 549.4 },
+      breakdownByCategory: overrides.breakdownByCategory ?? { FLIGHT: 549.4 },
     }),
   );
 }

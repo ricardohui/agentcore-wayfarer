@@ -4,6 +4,7 @@ import type { DelegatedCredentialError } from "../../../src/concierge/domain/del
 import type { Result } from "../../../src/concierge/domain/result";
 import type { CalendarPort } from "../../../src/concierge/usecase/ports";
 import { CalendarToolExecutor } from "../../../src/concierge/usecase/calendar-tool-executor";
+import { aRuntimeSessionId } from "../support/object-mothers";
 
 class FakeCalendarPort implements CalendarPort {
   public receivedCalls: { holdId: string; title: string }[] = [];
@@ -36,11 +37,10 @@ describe("CalendarToolExecutor", () => {
     calendar.respondWith({ ok: true, value: anEvent() });
     const executor = new CalendarToolExecutor(calendar);
 
-    const result = await executor.execute({
-      toolUseId: "call-1",
-      name: "write-calendar-event",
-      input: { holdId: "hold-1", title: "Tokyo trip" },
-    });
+    const result = await executor.execute(
+      { toolUseId: "call-1", name: "write-calendar-event", input: { holdId: "hold-1", title: "Tokyo trip" } },
+      aRuntimeSessionId(),
+    );
 
     expect(calendar.receivedCalls).toEqual([{ holdId: "hold-1", title: "Tokyo trip" }]);
     expect(result).toEqual({
@@ -62,11 +62,10 @@ describe("CalendarToolExecutor", () => {
     });
     const executor = new CalendarToolExecutor(calendar);
 
-    const result = await executor.execute({
-      toolUseId: "call-2",
-      name: "write-calendar-event",
-      input: { holdId: "hold-1", title: "Tokyo trip" },
-    });
+    const result = await executor.execute(
+      { toolUseId: "call-2", name: "write-calendar-event", input: { holdId: "hold-1", title: "Tokyo trip" } },
+      aRuntimeSessionId(),
+    );
 
     expect(result).toEqual({
       toolUseId: "call-2",
@@ -82,11 +81,10 @@ describe("CalendarToolExecutor", () => {
     const calendar = new FakeCalendarPort();
     const executor = new CalendarToolExecutor(calendar);
 
-    const result = await executor.execute({
-      toolUseId: "call-3",
-      name: "write-calendar-event",
-      input: { holdId: "", title: "Tokyo trip" },
-    });
+    const result = await executor.execute(
+      { toolUseId: "call-3", name: "write-calendar-event", input: { holdId: "", title: "Tokyo trip" } },
+      aRuntimeSessionId(),
+    );
 
     expect(calendar.receivedCalls).toEqual([]);
     expect(result.isError).toBe(true);
@@ -96,7 +94,10 @@ describe("CalendarToolExecutor", () => {
     const calendar = new FakeCalendarPort();
     const executor = new CalendarToolExecutor(calendar);
 
-    const result = await executor.execute({ toolUseId: "call-4", name: "some-other-tool", input: {} });
+    const result = await executor.execute(
+      { toolUseId: "call-4", name: "some-other-tool", input: {} },
+      aRuntimeSessionId(),
+    );
 
     expect(result).toEqual({
       toolUseId: "call-4",

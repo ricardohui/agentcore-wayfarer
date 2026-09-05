@@ -36,6 +36,7 @@ export async function respondToCallerMessage(
       message,
       ports.toolExecutor,
       preferences,
+      sessionId,
     );
     if (!replyResult.ok) {
       return replyResult;

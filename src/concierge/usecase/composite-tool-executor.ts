@@ -1,3 +1,4 @@
+import type { RuntimeSessionId } from "../domain/runtime-session-id";
 import type { ToolCall, ToolCallResult, ToolExecutor } from "./ports";
 
 export type RoutedToolExecutor = {
@@ -12,11 +13,11 @@ export type RoutedToolExecutor = {
 export class CompositeToolExecutor implements ToolExecutor {
   constructor(private readonly routes: readonly RoutedToolExecutor[]) {}
 
-  async execute(call: ToolCall): Promise<ToolCallResult> {
+  async execute(call: ToolCall, sessionId: RuntimeSessionId): Promise<ToolCallResult> {
     const route = this.routes.find((candidate) => candidate.toolNames.includes(call.name));
     if (!route) {
       return { toolUseId: call.toolUseId, isError: true, content: { error: `unknown tool: ${call.name}` } };
     }
-    return route.executor.execute(call);
+    return route.executor.execute(call, sessionId);
   }
 }

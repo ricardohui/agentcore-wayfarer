@@ -25,6 +25,10 @@ export default defineConfig({
       // its network boundary.
       CALENDAR_CREDENTIAL_PROVIDER_NAME: "wayfarer-calendar-oauth2",
       CALENDAR_API_URL: "https://test-calendar.example.com",
+      // Code Interpreter's budget/currency math (issue #18) — composition-root
+      // default for the CodeInterpreterBudgetAdapter, only exercised where a
+      // test mocks its network boundary.
+      CODE_INTERPRETER_ID: "test-code-interpreter-id",
     },
   },
 });
