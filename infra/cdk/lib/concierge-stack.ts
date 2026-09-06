@@ -135,6 +135,11 @@ export class ConciergeStack extends cdk.Stack {
     // Browser Tool's price-check (issue #19): Start/Update/Stop on the
     // browser the Runtime's own role uses for each hold's one-shot session.
     this.priceCheckBrowser.grantUse(this.runtime.role);
+    // grantUse() alone isn't enough — confirmed against the real deployed
+    // Runtime that PlaywrightBrowser's connectOverCDP (the actual page
+    // navigation, not session start/stop) needs this separate stream
+    // permission, or it 403s despite a successfully started session.
+    this.priceCheckBrowser.grant(this.runtime.role, "bedrock-agentcore:ConnectBrowserAutomationStream");
 
     new cdk.CfnOutput(this, "RuntimeArn", { value: this.runtime.agentRuntimeArn });
     new cdk.CfnOutput(this, "RuntimeId", { value: this.runtime.agentRuntimeId });

@@ -257,8 +257,9 @@ The mock price-check site (a public S3 bucket, its single page deployed via `Buc
 served from S3's REST endpoint — not S3 static *website* hosting, which AgentCore's managed Browser
 Tool blocks outright, see the Changelog) and a `BrowserCustom` (`AWS::BedrockAgentCore::BrowserCustom`,
 PUBLIC network mode) are both provisioned by CDK, with the Runtime's role granted Start/Update/Stop
-on the browser. Verified by `cdk synth` succeeding, not an automated test, same as REQ-GATEWAY-004 /
-REQ-IDENTITY-007 / REQ-CODEINTERPRETER-007.
+on the browser (`grantUse`) plus the separate `ConnectBrowserAutomationStream` permission the actual
+CDP navigation needs (not covered by `grantUse`, see the Changelog). Verified by `cdk synth`
+succeeding, not an automated test, same as REQ-GATEWAY-004 / REQ-IDENTITY-007 / REQ-CODEINTERPRETER-007.
 
 ## Changelog
 
@@ -298,3 +299,8 @@ REQ-IDENTITY-007 / REQ-CODEINTERPRETER-007.
   a built-in anti-abuse default, not a bug in this repo's code) — S3 static website hosting was
   removed from `PriceCheckSiteConstruct`, the site now served from S3's plain REST/object endpoint
   (`bucketRegionalDomainName`), confirmed working against the live deployed Browser Tool resource.
+- 2026-09-06 — Revised REQ-BROWSERTOOL-007 again: the real deploy's first hold attempt after the S3
+  endpoint fix above still 403'd — `BrowserCustomBase.grantUse()` only grants
+  `StartBrowserSession`/`UpdateBrowserStream`/`StopBrowserSession`, not
+  `ConnectBrowserAutomationStream`, which the CDP connection `PlaywrightBrowser.navigate()` actually
+  makes needs. `concierge-stack.ts` now grants that action explicitly alongside `grantUse()`.
