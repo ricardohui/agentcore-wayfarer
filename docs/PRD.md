@@ -253,11 +253,12 @@ against `BrowserToolPriceCheckAdapter`, `tests/concierge/adapter/browser-tool-pr
 
 ## REQ-BROWSERTOOL-007 — The price-check site and Browser Tool resource are fully CDK-provisioned
 
-The mock price-check site (an S3 bucket configured for static website hosting, deployed via
-`BucketDeployment`) and a `BrowserCustom` (`AWS::BedrockAgentCore::BrowserCustom`, PUBLIC network
-mode) are both provisioned by CDK, with the Runtime's role granted Start/Update/Stop on the browser.
-Verified by `cdk synth` succeeding, not an automated test, same as REQ-GATEWAY-004 / REQ-IDENTITY-007
-/ REQ-CODEINTERPRETER-007.
+The mock price-check site (a public S3 bucket, its single page deployed via `BucketDeployment` and
+served from S3's REST endpoint — not S3 static *website* hosting, which AgentCore's managed Browser
+Tool blocks outright, see the Changelog) and a `BrowserCustom` (`AWS::BedrockAgentCore::BrowserCustom`,
+PUBLIC network mode) are both provisioned by CDK, with the Runtime's role granted Start/Update/Stop
+on the browser. Verified by `cdk synth` succeeding, not an automated test, same as REQ-GATEWAY-004 /
+REQ-IDENTITY-007 / REQ-CODEINTERPRETER-007.
 
 ## Changelog
 
@@ -292,3 +293,8 @@ Verified by `cdk synth` succeeding, not an automated test, same as REQ-GATEWAY-0
   result's new `livePrice` field, and passed to `BudgetPort.recordHold` — revising
   REQ-CODEINTERPRETER-002/003's conversion input from issue #18. A new `BrowserToolPriceCheckAdapter`
   and a CDK-provisioned mock price-check site (S3 static website) + `BrowserCustom` resource back it.
+- 2026-09-06 — Revised REQ-BROWSERTOOL-007: a real deploy showed AgentCore's managed Browser Tool
+  blocks navigation to `s3-website-*.amazonaws.com` hostnames outright (`net::ERR_BLOCKED_BY_CLIENT`,
+  a built-in anti-abuse default, not a bug in this repo's code) — S3 static website hosting was
+  removed from `PriceCheckSiteConstruct`, the site now served from S3's plain REST/object endpoint
+  (`bucketRegionalDomainName`), confirmed working against the live deployed Browser Tool resource.
