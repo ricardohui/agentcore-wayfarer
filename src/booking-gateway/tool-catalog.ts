@@ -1,8 +1,15 @@
-// Single source of truth for Gateway's booking target's 4 tools (issue #15 /
-// ADR-0001) — imported by both the Concierge's BedrockConverseModelClient
-// (the contract shown to the model) and the CDK stack (the contract Gateway's
-// mcp.lambda target actually enforces), so the two can't drift apart.
-export type BookingToolName = "search-flights" | "search-hotels" | "hold-flight" | "hold-hotel";
+// Single source of truth for Gateway's booking target's tools (issue #15 /
+// ADR-0001, extended by issue #20 / ADR-0006) — imported by both the
+// Concierge's BedrockConverseModelClient (the contract shown to the model)
+// and the CDK stack (the contract Gateway's mcp.lambda target actually
+// enforces, and what Policy's Cedar schema is generated from), so the two
+// can't drift apart.
+export type BookingToolName =
+  | "search-flights"
+  | "search-hotels"
+  | "hold-flight"
+  | "hold-hotel"
+  | "approve-hold";
 
 export type BookingToolDefinition = {
   readonly name: BookingToolName;
@@ -15,6 +22,15 @@ export type BookingToolDefinition = {
 };
 
 const CITY_DESCRIPTION = "One of Wayfarer's 3 scenario cities: TOKYO, PARIS, or NEW_YORK.";
+
+// Populated internally from the candidate's searched price, not by the
+// model — declared here so Policy's Cedar schema (auto-generated from this
+// same tool definition, issue #20 / ADR-0006) has a `context.input.price`
+// field to gate hold-flight/hold-hotel on.
+const PRICE_PROPERTY = {
+  type: "number",
+  description: "Do not set — populated automatically from the candidate's previously searched price.",
+} as const;
 
 export const BOOKING_TOOL_DEFINITIONS: readonly BookingToolDefinition[] = [
   {
@@ -40,7 +56,7 @@ export const BOOKING_TOOL_DEFINITIONS: readonly BookingToolDefinition[] = [
     description: "Place a tentative hold on a flight candidate returned by search-flights.",
     inputSchema: {
       type: "object",
-      properties: { candidateId: { type: "string" } },
+      properties: { candidateId: { type: "string" }, price: PRICE_PROPERTY },
       required: ["candidateId"],
     },
   },
@@ -49,8 +65,14 @@ export const BOOKING_TOOL_DEFINITIONS: readonly BookingToolDefinition[] = [
     description: "Place a tentative hold on a hotel candidate returned by search-hotels.",
     inputSchema: {
       type: "object",
-      properties: { candidateId: { type: "string" } },
+      properties: { candidateId: { type: "string" }, price: PRICE_PROPERTY },
       required: ["candidateId"],
     },
+  },
+  {
+    name: "approve-hold",
+    description:
+      "Record the Caller's explicit approval for a hold that was Gated for exceeding the approval threshold. Call this only after the Caller has approved, then retry the hold-flight/hold-hotel call.",
+    inputSchema: { type: "object", properties: {}, required: [] },
   },
 ];

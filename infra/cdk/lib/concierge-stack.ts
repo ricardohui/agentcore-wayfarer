@@ -144,6 +144,7 @@ export class ConciergeStack extends cdk.Stack {
     new cdk.CfnOutput(this, "RuntimeArn", { value: this.runtime.agentRuntimeArn });
     new cdk.CfnOutput(this, "RuntimeId", { value: this.runtime.agentRuntimeId });
     new cdk.CfnOutput(this, "GatewayUrl", { value: this.bookingGateway.gateway.attrGatewayUrl });
+    new cdk.CfnOutput(this, "PolicyEngineId", { value: this.bookingGateway.policyEngine.attrPolicyEngineId });
     new cdk.CfnOutput(this, "MemoryId", { value: this.memory.memoryId });
     new cdk.CfnOutput(this, "UserPoolId", { value: this.identity.userPool.userPoolId });
     new cdk.CfnOutput(this, "UserPoolClientId", { value: this.identity.userPoolClient.userPoolClientId });

@@ -45,6 +45,12 @@ export async function handler(
       }
       return createHold();
     }
+    case "approve-hold":
+      // Policy (issue #20 / ADR-0006) has already permitted this call by the
+      // time it reaches the Lambda — approve-hold's only job is to exist as
+      // a Gateway action whose response event Policy's temporal rule can
+      // match against a subsequent hold. No side effect of its own.
+      return { approved: true };
     default:
       return errorResponse(`unknown operation: ${operation}`);
   }

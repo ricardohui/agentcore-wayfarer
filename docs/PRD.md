@@ -261,6 +261,65 @@ on the browser (`grantUse`) plus the separate `ConnectBrowserAutomationStream` p
 CDP navigation needs (not covered by `grantUse`, see the Changelog). Verified by `cdk synth`
 succeeding, not an automated test, same as REQ-GATEWAY-004 / REQ-IDENTITY-007 / REQ-CODEINTERPRETER-007.
 
+## REQ-POLICY-001 — A hold above the flat Local-currency threshold is DENYed before it takes effect
+
+A `hold-flight`/`hold-hotel` call whose candidate's Live price exceeds Policy's flat
+Local-currency threshold (500, ADR-0006) is DENYed at the Gateway boundary before Gateway's
+router Lambda ever runs — the Concierge sees a `HoldGated` `GatewayError`, not a completed hold.
+
+Source: issue #20, acceptance criterion 1.
+
+## REQ-POLICY-002 — A Gated hold surfaces its price and requests the Caller's approval
+
+A `HoldGated` denial's tool result carries the candidate's Live price and asks the model to
+surface it to the Caller and request approval, rather than reporting a broken tool call.
+
+Source: issue #20, acceptance criterion 2.
+
+## REQ-POLICY-003 — Calling approve-hold allows the retried hold
+
+Calling `approve-hold` emits an approval event Policy's temporal rule records; a hold-flight/
+hold-hotel retried for the same Caller session immediately afterward is ALLOWed.
+
+Source: issue #20, acceptance criterion 3.
+
+## REQ-POLICY-004 — A hold at or under the threshold passes with no approval step
+
+A `hold-flight`/`hold-hotel` call whose Live price is at or under the threshold is ALLOWed with
+no prior `approve-hold` call required.
+
+Source: issue #20, acceptance criterion 4.
+
+## REQ-POLICY-005 — An approve-hold event is consumed by at most one hold
+
+Once a Gated hold succeeds, the `approve-hold` event that authorized it is consumed: a second,
+unrelated Gated hold attempt in the same Caller session cannot reuse it and is DENYed again
+until a new `approve-hold` call is made.
+
+Source: issue #20, acceptance criterion 5.
+
+## REQ-POLICY-006 — The Gated-hold DENY, approve, ALLOW round trip is driven through the real Runtime entry point
+
+An acceptance test drives a Gated hold's DENY, the Caller's approval, `approve-hold`, and the
+retried hold's ALLOW through the real `/invocations` entry point, network boundary mocked
+(Gateway's MCP calls), asserting the surfaced price and the final successful hold.
+
+Source: issue #20, acceptance criterion 6 (`tests/concierge/acceptance/gated-hold-approval.spec.ts`).
+
+## REQ-POLICY-007 — Policy's infrastructure is fully CDK-provisioned
+
+A `CfnPolicyEngine` attached to the booking Gateway in `ENFORCE` mode, the NL-generated flat
+threshold Cedar policy, the hand-written unconditional `approve-hold` Cedar policy, and the
+hand-written one-time-consumption Dogwood temporal policy are all provisioned by CDK — no
+console or bare-CLI provisioning. Verified by `cdk synth` succeeding, not an automated test,
+same as REQ-GATEWAY-004 (integration coverage of the Policy-denial-to-`HoldGated` translation
+and the Policy session header lives in
+`tests/concierge/adapter/booking-gateway-adapter.spec.ts`, exercising Cedar policy
+syntax/evaluation edge cases at the adapter seam rather than against real deployed AWS Policy
+resources).
+
+Source: issue #20, acceptance criterion 7.
+
 ## Changelog
 
 - 2026-08-28 — Added REQ-RUNTIME-001, REQ-RUNTIME-002, REQ-RUNTIME-003 for the Runtime
@@ -304,3 +363,21 @@ succeeding, not an automated test, same as REQ-GATEWAY-004 / REQ-IDENTITY-007 / 
   `StartBrowserSession`/`UpdateBrowserStream`/`StopBrowserSession`, not
   `ConnectBrowserAutomationStream`, which the CDP connection `PlaywrightBrowser.navigate()` actually
   makes needs. `concierge-stack.ts` now grants that action explicitly alongside `grantUse()`.
+- 2026-09-05 — Added REQ-POLICY-001 through REQ-POLICY-007 for Policy's Cedar approval gate on
+  expensive holds (issue #20 / ADR-0006). Gateway's booking target gains a fifth action,
+  `approve-hold` (no side effect beyond the Gateway response event Policy's temporal rule
+  matches against); `hold-flight`/`hold-hotel` gain an optional `price` input field (the Live
+  price BookingToolExecutor already caches from the price-check, issue #19) so Cedar's flat
+  threshold can evaluate `context.input.price` at the Gateway boundary — the model itself never
+  supplies it. `BookingGatewayPort.holdFlight`/`holdHotel`/`approveHold` gained a `sessionId`
+  parameter carried as the `x-amzn-bedrock-agentcore-policy-session-id` header, correlating a
+  Caller's `approve-hold` event with their own later hold in the same Runtime session's Cedar
+  trajectory. A Policy denial surfaces over MCP as an ordinary `isError` tool response bearing
+  `AuthorizeActionException` text (not a distinct wire-level error); `BookingGatewayAdapter`
+  translates that into `GatewayError`'s new `HoldGated` variant, which `BookingToolExecutor`
+  turns into a tool result carrying the Live price and asking the model to request the Caller's
+  approval — the same "not authorized yet, here's what to do" shape as Identity's
+  `ConsentRequired` (issue #17). The Policy engine denies by default across every action on the
+  Gateway it's attached to, not just the ones a policy targets, so an unconditional
+  `wayfarer_search_unrestricted` Cedar policy permits `search-flights`/`search-hotels` — without
+  it, ENFORCE mode would silently deny the read-only search tools issue #15 already shipped.

@@ -1,5 +1,6 @@
 import type { BudgetSnapshot } from "../domain/budget-snapshot";
 import type { FlightCandidate, FlightCandidateId } from "../domain/flight-candidate";
+import type { GatewayError } from "../domain/gateway-error";
 import type { Hold } from "../domain/hold";
 import type { HotelCandidate, HotelCandidateId } from "../domain/hotel-candidate";
 import type { LocalPrice } from "../domain/local-price";
@@ -16,7 +17,13 @@ import type {
 } from "./ports";
 import { toolError, toolSuccess } from "./tool-call-result";
 
-export const BOOKING_TOOL_NAMES = ["search-flights", "search-hotels", "hold-flight", "hold-hotel"] as const;
+export const BOOKING_TOOL_NAMES = [
+  "search-flights",
+  "search-hotels",
+  "hold-flight",
+  "hold-hotel",
+  "approve-hold",
+] as const;
 type BookingToolName = (typeof BOOKING_TOOL_NAMES)[number];
 
 function isBookingToolName(name: string): name is BookingToolName {
@@ -89,6 +96,8 @@ export class BookingToolExecutor implements ToolExecutor {
         return this.holdFlight(call.toolUseId, input, sessionId);
       case "hold-hotel":
         return this.holdHotel(call.toolUseId, input, sessionId);
+      case "approve-hold":
+        return this.approveHold(call.toolUseId, sessionId);
     }
   }
 
@@ -138,9 +147,9 @@ export class BookingToolExecutor implements ToolExecutor {
 
     const candidate = this.flightCandidatesById.get(candidateId.value);
     if (!candidate) {
-      const result = await this.bookingGateway.holdFlight(candidateId.value);
+      const result = await this.bookingGateway.holdFlight(candidateId.value, undefined, sessionId);
       if (!result.ok) {
-        return toolError(toolUseId, result.error.message);
+        return holdErrorResult(toolUseId, result.error);
       }
       return toolSuccess(toolUseId, serializeHold(result.value));
     }
@@ -150,9 +159,9 @@ export class BookingToolExecutor implements ToolExecutor {
       return toolError(toolUseId, livePrice.error.message);
     }
 
-    const result = await this.bookingGateway.holdFlight(candidateId.value);
+    const result = await this.bookingGateway.holdFlight(candidateId.value, livePrice.value.amount, sessionId);
     if (!result.ok) {
-      return toolError(toolUseId, result.error.message);
+      return holdErrorResult(toolUseId, result.error, livePrice.value);
     }
     const budget = await this.budget.recordHold(sessionId, candidate.destination, "FLIGHT", livePrice.value);
     return toolSuccess(toolUseId, serializeHold(result.value, livePrice.value, budget.ok ? budget.value : undefined));
@@ -170,9 +179,9 @@ export class BookingToolExecutor implements ToolExecutor {
 
     const candidate = this.hotelCandidatesById.get(candidateId.value);
     if (!candidate) {
-      const result = await this.bookingGateway.holdHotel(candidateId.value);
+      const result = await this.bookingGateway.holdHotel(candidateId.value, undefined, sessionId);
       if (!result.ok) {
-        return toolError(toolUseId, result.error.message);
+        return holdErrorResult(toolUseId, result.error);
       }
       return toolSuccess(toolUseId, serializeHold(result.value));
     }
@@ -182,11 +191,45 @@ export class BookingToolExecutor implements ToolExecutor {
       return toolError(toolUseId, livePrice.error.message);
     }
 
-    const result = await this.bookingGateway.holdHotel(candidateId.value);
+    const result = await this.bookingGateway.holdHotel(candidateId.value, livePrice.value.amount, sessionId);
     if (!result.ok) {
-      return toolError(toolUseId, result.error.message);
+      return holdErrorResult(toolUseId, result.error, livePrice.value);
     }
     const budget = await this.budget.recordHold(sessionId, candidate.city, "HOTEL", livePrice.value);
     return toolSuccess(toolUseId, serializeHold(result.value, livePrice.value, budget.ok ? budget.value : undefined));
   }
+
+  private async approveHold(toolUseId: string, sessionId: RuntimeSessionId): Promise<ToolCallResult> {
+    const result = await this.bookingGateway.approveHold(sessionId);
+    if (!result.ok) {
+      return toolError(toolUseId, result.error.message);
+    }
+    return toolSuccess(toolUseId, { approved: true });
+  }
+}
+
+// A HoldGated denial (issue #20 / ADR-0006) isn't a broken call — it's the
+// same "not authorized yet, here's what to do about it" shape as Identity's
+// ConsentRequired (calendar-tool-executor.ts): the model needs the price to
+// surface to the Caller and a signal to call approve-hold before retrying.
+function holdErrorResult(toolUseId: string, error: GatewayError, livePrice?: LocalPrice): ToolCallResult {
+  if (error.type !== "HoldGated") {
+    return toolError(toolUseId, error.message);
+  }
+  if (!livePrice) {
+    // No candidate was cached for this candidateId (never searched in this
+    // executor instance), so there's no price to show the Caller — telling
+    // the model to seek approval for an unstated amount would be worse than
+    // telling it plainly that this candidate needs to be searched again.
+    return toolError(
+      toolUseId,
+      "This hold could not be authorized and its price is unknown to this executor. Search for this candidate again, then retry the hold.",
+      { gated: true },
+    );
+  }
+  return toolError(
+    toolUseId,
+    "This hold's price requires the Caller's explicit approval before it can proceed. Ask the Caller to confirm, call approve-hold, then retry this hold.",
+    { gated: true, price: livePrice.toJSON() },
+  );
 }

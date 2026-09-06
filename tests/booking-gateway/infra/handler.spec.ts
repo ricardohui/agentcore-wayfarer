@@ -63,6 +63,12 @@ describe("booking-gateway router Lambda", () => {
     expect(typeof result.error).toBe("string");
   });
 
+  it("returns an approved acknowledgement for an approve-hold call", async () => {
+    const result = (await handler({}, aContext("approve-hold"))) as Record<string, unknown>;
+
+    expect(result).toEqual({ approved: true });
+  });
+
   it("returns an error for an unknown operation", async () => {
     const result = (await handler({}, aContext("delete-everything"))) as Record<string, unknown>;
 

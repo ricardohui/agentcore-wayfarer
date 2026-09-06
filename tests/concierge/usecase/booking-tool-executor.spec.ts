@@ -302,6 +302,79 @@ describe("BookingToolExecutor", () => {
       expect(budget.receivedRecordHoldCalls).toEqual([]);
     });
 
+    it("surfaces a Gated denial without a price when the candidate was never searched in this executor", async () => {
+      const port = new FakeBookingGatewayPort();
+      port.respondToHoldFlightWith(err({ type: "HoldGated", message: "Tool call not allowed due to policy enforcement" }));
+      const executor = new BookingToolExecutor(port, new FakeBudgetPort(), new FakePriceCheckPort());
+
+      const result = await executor.execute(
+        { toolUseId: "call-1", name: "hold-flight", input: { candidateId: "flight-unknown" } },
+        aRuntimeSessionId(),
+      );
+
+      expect(port.receivedHoldFlightPrices).toEqual([undefined]);
+      expect(result.isError).toBe(true);
+      expect(result.content).toMatchObject({ gated: true });
+      expect(result.content).not.toHaveProperty("price");
+    });
+
+    it("passes the searched candidate's Live price to the Gateway hold call", async () => {
+      const port = new FakeBookingGatewayPort();
+      port.respondToSearchFlightsWith(ok([aFlightCandidate({ candidateId: "flight-1", destination: "TOKYO" })]));
+      port.respondToHoldFlightWith(ok(aHold({ holdId: "hold-1" })));
+      const priceCheck = new FakePriceCheckPort();
+      priceCheck.respondToCheckPriceWith(ok(aLocalPrice({ amount: 79500, currency: "JPY" })));
+      const budget = new FakeBudgetPort();
+      budget.respondToRecordHoldWith(ok(aBudgetSnapshot()));
+      const executor = new BookingToolExecutor(port, budget, priceCheck);
+      const sessionId = aRuntimeSessionId();
+
+      await executor.execute({ toolUseId: "call-1", name: "search-flights", input: { destination: "TOKYO" } }, sessionId);
+      await executor.execute({ toolUseId: "call-2", name: "hold-flight", input: { candidateId: "flight-1" } }, sessionId);
+
+      expect(port.receivedHoldFlightPrices).toEqual([79500]);
+    });
+
+    it("surfaces a Gated hold as an approval request, carrying the Live price, rather than a broken tool error", async () => {
+      const port = new FakeBookingGatewayPort();
+      port.respondToSearchFlightsWith(ok([aFlightCandidate({ candidateId: "flight-1", destination: "TOKYO" })]));
+      port.respondToHoldFlightWith(err({ type: "HoldGated", message: "Tool call not allowed due to policy enforcement" }));
+      const priceCheck = new FakePriceCheckPort();
+      const livePrice = aLocalPrice({ amount: 900, currency: "JPY" });
+      priceCheck.respondToCheckPriceWith(ok(livePrice));
+      const executor = new BookingToolExecutor(port, new FakeBudgetPort(), priceCheck);
+      const sessionId = aRuntimeSessionId();
+
+      await executor.execute({ toolUseId: "call-1", name: "search-flights", input: { destination: "TOKYO" } }, sessionId);
+      const result = await executor.execute(
+        { toolUseId: "call-2", name: "hold-flight", input: { candidateId: "flight-1" } },
+        sessionId,
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.content).toMatchObject({ gated: true, price: livePrice.toJSON() });
+    });
+
+    it("surfaces a Gated hold-hotel the same way", async () => {
+      const port = new FakeBookingGatewayPort();
+      port.respondToSearchHotelsWith(ok([aHotelCandidate({ candidateId: "hotel-1", city: "PARIS" })]));
+      port.respondToHoldHotelWith(err({ type: "HoldGated", message: "Tool call not allowed due to policy enforcement" }));
+      const priceCheck = new FakePriceCheckPort();
+      const livePrice = aLocalPrice({ amount: 600, currency: "EUR" });
+      priceCheck.respondToCheckPriceWith(ok(livePrice));
+      const executor = new BookingToolExecutor(port, new FakeBudgetPort(), priceCheck);
+      const sessionId = aRuntimeSessionId();
+
+      await executor.execute({ toolUseId: "call-1", name: "search-hotels", input: { city: "PARIS" } }, sessionId);
+      const result = await executor.execute(
+        { toolUseId: "call-2", name: "hold-hotel", input: { candidateId: "hotel-1" } },
+        sessionId,
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.content).toMatchObject({ gated: true, price: livePrice.toJSON() });
+    });
+
     it("still returns a successful hold (at the Live price) when the Budget port fails", async () => {
       const port = new FakeBookingGatewayPort();
       port.respondToSearchFlightsWith(ok([aFlightCandidate({ candidateId: "flight-1" })]));
@@ -329,6 +402,33 @@ describe("BookingToolExecutor", () => {
           livePrice: aLocalPrice().toJSON(),
         },
       });
+    });
+  });
+
+  describe("approve-hold (issue #20 / ADR-0006)", () => {
+    it("dispatches an approve-hold call to the port and reports it approved", async () => {
+      const port = new FakeBookingGatewayPort();
+      port.respondToApproveHoldWith(ok(undefined));
+      const executor = new BookingToolExecutor(port, new FakeBudgetPort(), new FakePriceCheckPort());
+      const sessionId = aRuntimeSessionId();
+
+      const result = await executor.execute({ toolUseId: "call-1", name: "approve-hold", input: {} }, sessionId);
+
+      expect(port.receivedApproveHoldSessionIds).toEqual([sessionId]);
+      expect(result).toEqual({ toolUseId: "call-1", isError: false, content: { approved: true } });
+    });
+
+    it("surfaces a GatewayError from approve-hold as a tool error result", async () => {
+      const port = new FakeBookingGatewayPort();
+      port.respondToApproveHoldWith(err({ type: "GatewayUnavailable", message: "Lambda timed out" }));
+      const executor = new BookingToolExecutor(port, new FakeBudgetPort(), new FakePriceCheckPort());
+
+      const result = await executor.execute(
+        { toolUseId: "call-1", name: "approve-hold", input: {} },
+        aRuntimeSessionId(),
+      );
+
+      expect(result).toEqual({ toolUseId: "call-1", isError: true, content: { error: "Lambda timed out" } });
     });
   });
 });

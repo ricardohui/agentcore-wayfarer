@@ -52,14 +52,30 @@ export interface ModelClient {
   ): Promise<Result<ConciergeReply, ModelError>>;
 }
 
-// Gateway's booking target (issue #15): search-flights, search-hotels,
-// hold-flight, hold-hotel — the Concierge's usecase-owned port, backed by a
-// real adapter that speaks MCP to AgentCore Gateway.
+// Gateway's booking target (issue #15, extended by issue #20 / ADR-0006):
+// search-flights, search-hotels, hold-flight, hold-hotel, approve-hold — the
+// Concierge's usecase-owned port, backed by a real adapter that speaks MCP
+// to AgentCore Gateway. hold-flight/hold-hotel carry the candidate's price
+// (undefined when no candidate was cached to price) so Policy's Cedar
+// threshold can evaluate context.input.price at the Gateway boundary; the
+// sessionId on hold-flight/hold-hotel/approve-hold becomes the Policy
+// session header, correlating a Caller's approve-hold event with their own
+// later hold attempt. A denied Gated hold surfaces as GatewayError's
+// HoldGated variant, not a thrown exception.
 export interface BookingGatewayPort {
   searchFlights(destination: ScenarioCity): Promise<Result<readonly FlightCandidate[], GatewayError>>;
   searchHotels(city: ScenarioCity): Promise<Result<readonly HotelCandidate[], GatewayError>>;
-  holdFlight(candidateId: FlightCandidateId): Promise<Result<Hold, GatewayError>>;
-  holdHotel(candidateId: HotelCandidateId): Promise<Result<Hold, GatewayError>>;
+  holdFlight(
+    candidateId: FlightCandidateId,
+    price: number | undefined,
+    sessionId: RuntimeSessionId,
+  ): Promise<Result<Hold, GatewayError>>;
+  holdHotel(
+    candidateId: HotelCandidateId,
+    price: number | undefined,
+    sessionId: RuntimeSessionId,
+  ): Promise<Result<Hold, GatewayError>>;
+  approveHold(sessionId: RuntimeSessionId): Promise<Result<void, GatewayError>>;
 }
 
 // Memory (issue #16): create_event/get_last_k_turns back scratch state
