@@ -15,6 +15,7 @@ import type { Hold, HoldId } from "../domain/hold";
 import type { HotelCandidate, HotelCandidateId } from "../domain/hotel-candidate";
 import type { LocalPrice } from "../domain/local-price";
 import type { MemoryError } from "../domain/memory-error";
+import type { PriceCheckError } from "../domain/price-check-error";
 import type { Result } from "../domain/result";
 import type { RuntimeSessionId } from "../domain/runtime-session-id";
 import type { ScenarioCity } from "../domain/scenario-city";
@@ -111,6 +112,20 @@ export interface BudgetPort {
     category: BudgetCategory,
     price: LocalPrice,
   ): Promise<Result<BudgetSnapshot, BudgetError>>;
+}
+
+// Browser Tool's price-check (issue #19 / ADR-0005): a one-shot Browser
+// session (navigate, read price, close) run automatically immediately
+// before every hold-flight/hold-hotel call, for every candidate — never
+// agent discretion. The mock price-check site randomizes its price
+// independently of Gateway's mock catalog, so the Live price this returns
+// can diverge from the candidate's Quoted price; the Live price (not
+// Quoted) is what gets held, shown to the Caller, and fed into BudgetPort.
+export interface PriceCheckPort {
+  checkPrice(
+    candidateId: FlightCandidateId | HotelCandidateId,
+    city: ScenarioCity,
+  ): Promise<Result<LocalPrice, PriceCheckError>>;
 }
 
 export interface SessionLock {

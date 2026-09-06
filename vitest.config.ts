@@ -29,6 +29,11 @@ export default defineConfig({
       // default for the CodeInterpreterBudgetAdapter, only exercised where a
       // test mocks its network boundary.
       CODE_INTERPRETER_ID: "test-code-interpreter-id",
+      // Browser Tool's price-check (issue #19) — composition-root default for
+      // the BrowserToolPriceCheckAdapter, only exercised where a test mocks
+      // its network boundary.
+      BROWSER_ID: "test-browser-id",
+      PRICE_CHECK_SITE_URL: "http://test-price-check-site.s3-website-us-east-1.amazonaws.com/index.html",
     },
   },
 });

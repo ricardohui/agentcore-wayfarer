@@ -34,7 +34,13 @@ writeFileSync(
   JSON.stringify({ type: "module", dependencies: runtimeDependencies }, null, 2),
 );
 
+// Browser Tool's price-check (issue #19) pulls in "playwright" for its
+// PlaywrightBrowser.connectOverCDP — the deployed bundle only ever connects
+// to AgentCore's remote Browser Tool session, never launches a local
+// browser, so downloading Playwright's local browser binaries here would be
+// pure waste (and a slow, unnecessary step in every deploy).
 execFileSync("npm", ["install", "--omit=dev", "--no-package-lock"], {
   cwd: OUT_DIR,
   stdio: "inherit",
+  env: { ...process.env, PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1" },
 });

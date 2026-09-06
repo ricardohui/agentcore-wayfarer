@@ -154,12 +154,13 @@ Source: issue #18, acceptance criterion 1.
 
 ## REQ-CODEINTERPRETER-002 — Every successful hold triggers a real executeCode currency conversion
 
-A successful `hold-flight`/`hold-hotel` call converts the held candidate's Local price to Home
-currency (USD) via a real `executeCode` call against the static mock rate table (ADR-0004) — never
-model-guessed arithmetic. The conversion uses whichever candidate's price/city was last returned
-for that candidateId by `search-flights`/`search-hotels` in the same tool-executor instance.
+A successful `hold-flight`/`hold-hotel` call converts the held candidate's Live price (issue #19 —
+see REQ-BROWSERTOOL-004; originally the candidate's Quoted price before issue #19) to Home currency
+(USD) via a real `executeCode` call against the static mock rate table (ADR-0004) — never
+model-guessed arithmetic. The candidate's city/category is whichever was last returned for that
+candidateId by `search-flights`/`search-hotels` in the same tool-executor instance.
 
-Source: issue #18, acceptance criterion 2.
+Source: issue #18, acceptance criterion 2 (revised by issue #19).
 
 ## REQ-CODEINTERPRETER-003 — The Running total accumulates correctly across multiple holds in different Local currencies
 
@@ -202,6 +203,62 @@ A custom Code Interpreter resource in Sandbox network mode is provisioned by CDK
 granted Start/Invoke/Stop on it. Verified by `cdk synth` succeeding, not an automated test, same as
 REQ-GATEWAY-004 / REQ-IDENTITY-007.
 
+## REQ-BROWSERTOOL-001 — A price-check runs automatically before every hold, never agent-discretion
+
+Every `hold-flight`/`hold-hotel` call for a candidate this tool-executor instance has searched runs
+a Browser Tool price-check (ADR-0005) before Gateway's hold call — unconditionally, with no path for
+the model to skip it.
+
+Source: issue #19, acceptance criterion 1.
+
+## REQ-BROWSERTOOL-002 — The Live price is read from the mock price-check site and can diverge from Quoted
+
+`PriceCheckPort.checkPrice` navigates a one-shot Browser Tool session to the mock price-check site
+(a static page, CDK-deployed to S3, ADR-0005) and reads back a Live price computed independently of
+Gateway's mock catalog — so it can differ from the candidate's Quoted price from search.
+
+Source: issue #19, acceptance criterion 2.
+
+## REQ-BROWSERTOOL-003 — The Caller is shown the Live price before the hold proceeds
+
+A successful hold's tool result carries a `livePrice` field alongside `holdId`/`status`/`expiresAt`,
+so the model can surface it to the Caller. The price-check runs before Gateway's hold call, and both
+complete within the same tool-use round — never a separate agent-discretion confirmation step.
+
+Source: issue #19, acceptance criterion 3.
+
+## REQ-BROWSERTOOL-004 — The Running total is computed from Live price, not Quoted price
+
+`BookingToolExecutor` passes the price-check's Live price (not the searched candidate's Quoted
+price) to `BudgetPort.recordHold` — revising REQ-CODEINTERPRETER-002/003's conversion input.
+
+Source: issue #19, acceptance criterion 4.
+
+## REQ-BROWSERTOOL-005 — A candidate's divergent Live price drives a matching Running total
+
+An acceptance test holds a candidate whose Live price (scripted to differ from its Quoted price)
+ends up as the Running total Code Interpreter reports — not a total computed from Quoted price.
+
+Source: issue #19, acceptance criterion 5 (`tests/concierge/acceptance/live-price-check.spec.ts`).
+
+## REQ-BROWSERTOOL-006 — A price-check failure blocks the hold
+
+Unlike a `BudgetPort` failure (REQ-CODEINTERPRETER-006, non-blocking), a `PriceCheckPort` failure
+(Browser Tool navigation failure, or an unparseable price) surfaces as a tool error and Gateway's
+hold call is never made — there is no price to hold at.
+
+Source: issue #19, acceptance criterion 6 (unit-tested via `BookingToolExecutor`'s in-memory
+`FakePriceCheckPort`; Browser Tool navigation-failure translation is integration-tested directly
+against `BrowserToolPriceCheckAdapter`, `tests/concierge/adapter/browser-tool-price-check-adapter.spec.ts`).
+
+## REQ-BROWSERTOOL-007 — The price-check site and Browser Tool resource are fully CDK-provisioned
+
+The mock price-check site (an S3 bucket configured for static website hosting, deployed via
+`BucketDeployment`) and a `BrowserCustom` (`AWS::BedrockAgentCore::BrowserCustom`, PUBLIC network
+mode) are both provisioned by CDK, with the Runtime's role granted Start/Update/Stop on the browser.
+Verified by `cdk synth` succeeding, not an automated test, same as REQ-GATEWAY-004 / REQ-IDENTITY-007
+/ REQ-CODEINTERPRETER-007.
+
 ## Changelog
 
 - 2026-08-28 — Added REQ-RUNTIME-001, REQ-RUNTIME-002, REQ-RUNTIME-003 for the Runtime
@@ -228,3 +285,10 @@ REQ-GATEWAY-004 / REQ-IDENTITY-007.
   Local price/city/category to convert; `ToolExecutor.execute`/`ModelClient.generateReply` both
   gained a `sessionId` parameter so Code Interpreter's per-conversation sandbox session can be keyed
   by it without rebuilding the executor per call.
+- 2026-09-05 — Added REQ-BROWSERTOOL-001 through REQ-BROWSERTOOL-007 for Browser Tool's live
+  price-check before every hold (issue #19 / ADR-0005). `BookingToolExecutor` now runs a
+  `PriceCheckPort` check for every cached candidate immediately before Gateway's hold call, blocking
+  the hold on failure; the resulting Live price (not Quoted) is what gets held, surfaced in the tool
+  result's new `livePrice` field, and passed to `BudgetPort.recordHold` — revising
+  REQ-CODEINTERPRETER-002/003's conversion input from issue #18. A new `BrowserToolPriceCheckAdapter`
+  and a CDK-provisioned mock price-check site (S3 static website) + `BrowserCustom` resource back it.

@@ -5,7 +5,7 @@ import {
 } from "@aws-sdk/client-bedrock-agentcore";
 import { ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
 import type { DocumentType } from "@smithy/types";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { app } from "../../../src/concierge/infra/handler";
 import { bedrockMock } from "../support/bedrock-network-boundary";
 import { CognitoMockServer } from "../support/cognito-network-boundary";
@@ -13,6 +13,22 @@ import { aSessionId, closeConciergeApp, invoke, waitForHealthy } from "../suppor
 import { GatewayMockServer } from "../support/gateway-network-boundary";
 import { memoryMock } from "../support/memory-network-boundary";
 import { NetworkBoundary } from "../support/network-boundary";
+
+const navigateMock = vi.fn();
+const getTextMock = vi.fn();
+const stopSessionMock = vi.fn();
+
+// Every hold now runs a price-check first (issue #19 / ADR-0005) — this
+// test isn't about the price-check itself (see live-price-check.spec.ts),
+// so it just needs the Browser Tool client mocked out to a fast, successful
+// no-op rather than reaching real (fake-credentialed) AWS infrastructure.
+vi.mock("bedrock-agentcore/browser/playwright", () => ({
+  PlaywrightBrowser: vi.fn().mockImplementation(() => ({
+    navigate: navigateMock,
+    getText: getTextMock,
+    stopSession: stopSessionMock,
+  })),
+}));
 
 const PORT = 41824;
 const BASE_URL = `http://127.0.0.1:${PORT}`;
@@ -40,6 +56,10 @@ describe("Booking search-and-hold vertical slice (REQ-GATEWAY-001, REQ-GATEWAY-0
     network = new NetworkBoundary();
     gateway = new GatewayMockServer(network.agent);
     cognito = await CognitoMockServer.register(network.agent);
+
+    navigateMock.mockReset().mockResolvedValue(undefined);
+    getTextMock.mockReset().mockResolvedValue(JSON.stringify({ amount: 1, currency: "USD" }));
+    stopSessionMock.mockReset().mockResolvedValue(undefined);
   });
 
   afterEach(async () => {

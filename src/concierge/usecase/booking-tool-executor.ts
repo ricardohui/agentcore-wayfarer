@@ -2,10 +2,18 @@ import type { BudgetSnapshot } from "../domain/budget-snapshot";
 import type { FlightCandidate, FlightCandidateId } from "../domain/flight-candidate";
 import type { Hold } from "../domain/hold";
 import type { HotelCandidate, HotelCandidateId } from "../domain/hotel-candidate";
+import type { LocalPrice } from "../domain/local-price";
 import { parseNonBlankId } from "../domain/non-blank-id";
 import type { RuntimeSessionId } from "../domain/runtime-session-id";
 import { parseScenarioCity } from "../domain/scenario-city";
-import type { BookingGatewayPort, BudgetPort, ToolCall, ToolCallResult, ToolExecutor } from "./ports";
+import type {
+  BookingGatewayPort,
+  BudgetPort,
+  PriceCheckPort,
+  ToolCall,
+  ToolCallResult,
+  ToolExecutor,
+} from "./ports";
 import { toolError, toolSuccess } from "./tool-call-result";
 
 export const BOOKING_TOOL_NAMES = ["search-flights", "search-hotels", "hold-flight", "hold-hotel"] as const;
@@ -33,11 +41,12 @@ function serializeHotelCandidate(candidate: HotelCandidate) {
   };
 }
 
-function serializeHold(hold: Hold, budget?: BudgetSnapshot) {
+function serializeHold(hold: Hold, livePrice?: LocalPrice, budget?: BudgetSnapshot) {
   return {
     holdId: hold.holdId,
     status: hold.status,
     expiresAt: hold.expiresAt.toISOString(),
+    ...(livePrice ? { livePrice: livePrice.toJSON() } : {}),
     ...(budget ? { budget: budget.toJSON() } : {}),
   };
 }
@@ -45,11 +54,15 @@ function serializeHold(hold: Hold, budget?: BudgetSnapshot) {
 // Dispatches a model tool-use call to Gateway's booking target (issue #15),
 // translating between the model's untyped tool arguments and the
 // BookingGatewayPort's domain-typed methods. Also bridges search results
-// into Code Interpreter's budget/currency math (issue #18): Gateway's
+// into Browser Tool's price-check (issue #19 / ADR-0005) and Code
+// Interpreter's budget/currency math (issue #18): Gateway's
 // hold-flight/hold-hotel mock doesn't echo back the held item's price, so
 // this executor remembers each candidate it showed the model during a
-// search, keyed by candidateId, to recover the price/city/category a
-// successful hold needs to convert and record.
+// search, keyed by candidateId, to recover the city/category a successful
+// hold needs, and to run a price-check against — automatically, before
+// every hold call, never left to agent discretion. The price-check's Live
+// price (not the candidate's Quoted price) is what gets held, surfaced to
+// the Caller, and recorded against the budget.
 export class BookingToolExecutor implements ToolExecutor {
   private readonly flightCandidatesById = new Map<FlightCandidateId, FlightCandidate>();
   private readonly hotelCandidatesById = new Map<HotelCandidateId, HotelCandidate>();
@@ -57,6 +70,7 @@ export class BookingToolExecutor implements ToolExecutor {
   constructor(
     private readonly bookingGateway: BookingGatewayPort,
     private readonly budget: BudgetPort,
+    private readonly priceCheck: PriceCheckPort,
   ) {}
 
   async execute(call: ToolCall, sessionId: RuntimeSessionId): Promise<ToolCallResult> {
@@ -122,17 +136,26 @@ export class BookingToolExecutor implements ToolExecutor {
       return toolError(toolUseId, candidateId.error.message);
     }
 
+    const candidate = this.flightCandidatesById.get(candidateId.value);
+    if (!candidate) {
+      const result = await this.bookingGateway.holdFlight(candidateId.value);
+      if (!result.ok) {
+        return toolError(toolUseId, result.error.message);
+      }
+      return toolSuccess(toolUseId, serializeHold(result.value));
+    }
+
+    const livePrice = await this.priceCheck.checkPrice(candidateId.value, candidate.destination);
+    if (!livePrice.ok) {
+      return toolError(toolUseId, livePrice.error.message);
+    }
+
     const result = await this.bookingGateway.holdFlight(candidateId.value);
     if (!result.ok) {
       return toolError(toolUseId, result.error.message);
     }
-
-    const candidate = this.flightCandidatesById.get(candidateId.value);
-    if (!candidate) {
-      return toolSuccess(toolUseId, serializeHold(result.value));
-    }
-    const budget = await this.budget.recordHold(sessionId, candidate.destination, "FLIGHT", candidate.price);
-    return toolSuccess(toolUseId, serializeHold(result.value, budget.ok ? budget.value : undefined));
+    const budget = await this.budget.recordHold(sessionId, candidate.destination, "FLIGHT", livePrice.value);
+    return toolSuccess(toolUseId, serializeHold(result.value, livePrice.value, budget.ok ? budget.value : undefined));
   }
 
   private async holdHotel(
@@ -145,16 +168,25 @@ export class BookingToolExecutor implements ToolExecutor {
       return toolError(toolUseId, candidateId.error.message);
     }
 
+    const candidate = this.hotelCandidatesById.get(candidateId.value);
+    if (!candidate) {
+      const result = await this.bookingGateway.holdHotel(candidateId.value);
+      if (!result.ok) {
+        return toolError(toolUseId, result.error.message);
+      }
+      return toolSuccess(toolUseId, serializeHold(result.value));
+    }
+
+    const livePrice = await this.priceCheck.checkPrice(candidateId.value, candidate.city);
+    if (!livePrice.ok) {
+      return toolError(toolUseId, livePrice.error.message);
+    }
+
     const result = await this.bookingGateway.holdHotel(candidateId.value);
     if (!result.ok) {
       return toolError(toolUseId, result.error.message);
     }
-
-    const candidate = this.hotelCandidatesById.get(candidateId.value);
-    if (!candidate) {
-      return toolSuccess(toolUseId, serializeHold(result.value));
-    }
-    const budget = await this.budget.recordHold(sessionId, candidate.city, "HOTEL", candidate.price);
-    return toolSuccess(toolUseId, serializeHold(result.value, budget.ok ? budget.value : undefined));
+    const budget = await this.budget.recordHold(sessionId, candidate.city, "HOTEL", livePrice.value);
+    return toolSuccess(toolUseId, serializeHold(result.value, livePrice.value, budget.ok ? budget.value : undefined));
   }
 }

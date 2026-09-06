@@ -6,6 +6,7 @@ import type { Construct } from "constructs";
 import { CONCIERGE_MODEL_ID } from "../../../src/concierge/infra/model-id";
 import { BookingGatewayConstruct } from "./booking-gateway-construct";
 import { IdentityConstruct } from "./identity-construct";
+import { PriceCheckSiteConstruct } from "./price-check-site-construct";
 
 const HANDLER_BUNDLE_DIR = path.join(__dirname, "../../../dist/concierge");
 
@@ -15,12 +16,24 @@ export class ConciergeStack extends cdk.Stack {
   public readonly memory: agentcore.Memory;
   public readonly identity: IdentityConstruct;
   public readonly codeInterpreter: agentcore.CodeInterpreterCustom;
+  public readonly priceCheckSite: PriceCheckSiteConstruct;
+  public readonly priceCheckBrowser: agentcore.BrowserCustom;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
     this.bookingGateway = new BookingGatewayConstruct(this, "BookingGateway");
     this.identity = new IdentityConstruct(this, "Identity");
+    this.priceCheckSite = new PriceCheckSiteConstruct(this, "PriceCheckSite");
+
+    // Browser Tool's price-check (issue #19 / ADR-0005): PUBLIC network mode
+    // (the default) — the mock price-check site is a public S3 static
+    // website, no VPC/private connectivity needed to reach it.
+    this.priceCheckBrowser = new agentcore.BrowserCustom(this, "PriceCheckBrowser", {
+      browserCustomName: "wayfarer_price_check_browser",
+      description: "Wayfarer price-check Browser Tool (issue #19 / ADR-0005)",
+      networkConfiguration: agentcore.BrowserNetworkConfiguration.usingPublicNetwork(),
+    });
 
     // Code Interpreter's budget/currency math (issue #18 / ADR-0004): Sandbox
     // network mode (no internet egress) — the static mock rate table is
@@ -86,6 +99,8 @@ export class ConciergeStack extends cdk.Stack {
         CALENDAR_CREDENTIAL_PROVIDER_NAME: this.identity.credentialProviderName,
         CALENDAR_API_URL: this.identity.calendarFunctionUrl.url,
         CODE_INTERPRETER_ID: this.codeInterpreter.codeInterpreterId,
+        BROWSER_ID: this.priceCheckBrowser.browserId,
+        PRICE_CHECK_SITE_URL: this.priceCheckSite.siteUrl,
       },
     });
 
@@ -117,6 +132,10 @@ export class ConciergeStack extends cdk.Stack {
     // conversion.
     this.codeInterpreter.grantUse(this.runtime.role);
 
+    // Browser Tool's price-check (issue #19): Start/Update/Stop on the
+    // browser the Runtime's own role uses for each hold's one-shot session.
+    this.priceCheckBrowser.grantUse(this.runtime.role);
+
     new cdk.CfnOutput(this, "RuntimeArn", { value: this.runtime.agentRuntimeArn });
     new cdk.CfnOutput(this, "RuntimeId", { value: this.runtime.agentRuntimeId });
     new cdk.CfnOutput(this, "GatewayUrl", { value: this.bookingGateway.gateway.attrGatewayUrl });
@@ -129,5 +148,7 @@ export class ConciergeStack extends cdk.Stack {
       description: "Retrieve the generated Cognito test user's password from this secret",
     });
     new cdk.CfnOutput(this, "CodeInterpreterId", { value: this.codeInterpreter.codeInterpreterId });
+    new cdk.CfnOutput(this, "PriceCheckSiteUrl", { value: this.priceCheckSite.siteUrl });
+    new cdk.CfnOutput(this, "PriceCheckBrowserId", { value: this.priceCheckBrowser.browserId });
   }
 }
