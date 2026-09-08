@@ -62,7 +62,7 @@ export class BedrockConverseModelClient implements ModelClient {
           new ConverseCommand({
             modelId: this.modelId,
             messages,
-            ...(system ? { system } : {}),
+            system,
             toolConfig: TOOL_CONFIG,
             inferenceConfig: { maxTokens: MAX_OUTPUT_TOKENS },
           }),
@@ -98,12 +98,24 @@ function toUserMessage(message: CallerMessage): Message {
   return { role: "user", content: [{ text: message }] };
 }
 
-function toSystemBlocks(preferences: readonly CallerPreference[]): SystemContentBlock[] | undefined {
+// A tool result carrying an authorizationUrl (calendar's ConsentRequired,
+// issue #17 / ADR-0003) is the model's only channel to the Caller — the
+// Concierge Runtime response is plain reply text, with no side channel a UI
+// could render a link from (src/concierge/infra/handler.ts). Left unsaid,
+// the model tends to invent a nonexistent "click Allow in the interface"
+// UX instead of quoting the real URL.
+const BASE_PERSONA_PROMPT =
+  "You are the Wayfarer Concierge, a travel-booking assistant. " +
+  "When a tool result carries an authorizationUrl (a ConsentRequired calendar-access request), " +
+  "always quote that URL verbatim in your reply as a markdown link so the Caller can click it — " +
+  "never assume the interface renders it for you.";
+
+function toSystemBlocks(preferences: readonly CallerPreference[]): SystemContentBlock[] {
   if (preferences.length === 0) {
-    return undefined;
+    return [{ text: BASE_PERSONA_PROMPT }];
   }
   const facts = preferences.map((preference) => `- ${preference}`).join("\n");
-  return [{ text: `What you already know about this returning Caller:\n${facts}` }];
+  return [{ text: `${BASE_PERSONA_PROMPT}\n\nWhat you already know about this returning Caller:\n${facts}` }];
 }
 
 function extractToolCalls(response: ConverseCommandOutput): ToolCall[] {

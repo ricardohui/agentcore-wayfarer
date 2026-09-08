@@ -38,7 +38,7 @@ describe("BedrockConverseModelClient", () => {
     expect(calls[0]?.args[0].input.system).toEqual([{ text: expect.stringContaining("home airport: NRT") }]);
   });
 
-  it("omits the system prompt entirely when there are no stored preferences", async () => {
+  it("still sends the base persona system prompt when there are no stored preferences", async () => {
     bedrockMock.on(ConverseCommand).resolves({
       output: { message: { role: "assistant", content: [{ text: "Hello traveler!" }] } },
     });
@@ -47,7 +47,20 @@ describe("BedrockConverseModelClient", () => {
     await client.generateReply([], aCallerMessage("Hi"), toolExecutor, [], aRuntimeSessionId());
 
     const calls = bedrockMock.commandCalls(ConverseCommand);
-    expect(calls[0]?.args[0].input.system).toBeUndefined();
+    expect(calls[0]?.args[0].input.system).toEqual([{ text: expect.stringContaining("authorizationUrl") }]);
+  });
+
+  it("instructs the model to always quote a ConsentRequired authorizationUrl verbatim as a link", async () => {
+    bedrockMock.on(ConverseCommand).resolves({
+      output: { message: { role: "assistant", content: [{ text: "Hello traveler!" }] } },
+    });
+    const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId);
+
+    await client.generateReply([], aCallerMessage("Hi"), toolExecutor, [], aRuntimeSessionId());
+
+    const calls = bedrockMock.commandCalls(ConverseCommand);
+    const systemText = (calls[0]?.args[0].input.system as { text: string }[] | undefined)?.[0]?.text ?? "";
+    expect(systemText).toMatch(/never assume the interface renders it/i);
   });
 
   it("always sets maxTokens explicitly, to avoid the default-max quota reservation", async () => {
