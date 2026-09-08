@@ -189,18 +189,24 @@ _Avoid_: Price (bare) — always say which stage of the flow you mean
 ## Approve-hold
 
 A generic Gateway action (added to Gateway's existing target, revising issue
-#3) whose sole purpose is emitting an approval event Policy's temporal Cedar
-rule matches against a subsequent hold-flight/hold-hotel call. Not itself a
-booking action — carries no side effect beyond the event it produces.
+#3) whose sole purpose is marking the Caller's session approved, so a
+subsequent hold-flight/hold-hotel retry can carry `approved: true` for
+Policy's approved-retry Cedar rule to match. Not itself a booking action —
+carries no side effect beyond that. One-time consumption (a second,
+unrelated hold can't reuse the approval) is enforced by the Concierge, which
+clears the session's approval after one successful gated hold — not by
+Policy (issue #20, revised: the original design used a Dogwood temporal
+rule for this, blocked by an AWS platform bug).
 _Avoid_: Confirm, authorize (bare) — Approve-hold names the specific Gateway
 action, not the general concept of the Caller agreeing
 
 ## Gated hold
 
 A hold-flight/hold-hotel call whose Local-currency price exceeds Policy's
-flat threshold, requiring an unconsumed Approve-hold event in the session
-trajectory before Policy's Cedar rules allow it. Below threshold, holds pass
-without an approval step.
+flat threshold, DENYed unless the request itself carries `approved: true`
+(set by the Concierge after an Approve-hold call). Both the threshold and
+approved-retry rules are stateless, per-request Cedar. Below threshold,
+holds pass without an approval step.
 
 ## Course outline
 

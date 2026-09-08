@@ -431,4 +431,94 @@ describe("BookingToolExecutor", () => {
       expect(result).toEqual({ toolUseId: "call-1", isError: true, content: { error: "Lambda timed out" } });
     });
   });
+
+  // Policy's approval gate moved from a Dogwood temporal rule to two
+  // stateless Cedar rules once the temporal engine proved unusable (issue
+  // #20 revision, ADR-0006). The executor now carries the one-time-use
+  // guarantee itself: it tracks which sessions have an unconsumed approval
+  // and stamps `approved: true` on the next hold in that session, clearing
+  // it once that hold succeeds.
+  describe("approved-retry gate (issue #20 revision)", () => {
+    it("does not mark a hold approved before approve-hold has been called for its session", async () => {
+      const port = new FakeBookingGatewayPort();
+      port.respondToHoldFlightWith(ok(aHold({ holdId: "hold-1" })));
+      const executor = new BookingToolExecutor(port, new FakeBudgetPort(), new FakePriceCheckPort());
+
+      await executor.execute(
+        { toolUseId: "call-1", name: "hold-flight", input: { candidateId: "flight-1" } },
+        aRuntimeSessionId(),
+      );
+
+      expect(port.receivedHoldFlightApprovedFlags).toEqual([false]);
+    });
+
+    it("marks the next hold-flight in the session approved after approve-hold succeeds", async () => {
+      const port = new FakeBookingGatewayPort();
+      port.respondToApproveHoldWith(ok(undefined));
+      port.respondToHoldFlightWith(ok(aHold({ holdId: "hold-1" })));
+      const executor = new BookingToolExecutor(port, new FakeBudgetPort(), new FakePriceCheckPort());
+      const sessionId = aRuntimeSessionId();
+
+      await executor.execute({ toolUseId: "call-1", name: "approve-hold", input: {} }, sessionId);
+      await executor.execute({ toolUseId: "call-2", name: "hold-flight", input: { candidateId: "flight-1" } }, sessionId);
+
+      expect(port.receivedHoldFlightApprovedFlags).toEqual([true]);
+    });
+
+    it("marks the next hold-hotel in the session approved after approve-hold succeeds", async () => {
+      const port = new FakeBookingGatewayPort();
+      port.respondToApproveHoldWith(ok(undefined));
+      port.respondToHoldHotelWith(ok(aHold({ holdId: "hold-2" })));
+      const executor = new BookingToolExecutor(port, new FakeBudgetPort(), new FakePriceCheckPort());
+      const sessionId = aRuntimeSessionId();
+
+      await executor.execute({ toolUseId: "call-1", name: "approve-hold", input: {} }, sessionId);
+      await executor.execute({ toolUseId: "call-2", name: "hold-hotel", input: { candidateId: "hotel-1" } }, sessionId);
+
+      expect(port.receivedHoldHotelApprovedFlags).toEqual([true]);
+    });
+
+    it("consumes the approval after one successful hold, so a second expensive hold in the same session is gated again (one-time consumption)", async () => {
+      const port = new FakeBookingGatewayPort();
+      port.respondToApproveHoldWith(ok(undefined));
+      port.respondToHoldFlightWith(ok(aHold({ holdId: "hold-1" })));
+      const executor = new BookingToolExecutor(port, new FakeBudgetPort(), new FakePriceCheckPort());
+      const sessionId = aRuntimeSessionId();
+
+      await executor.execute({ toolUseId: "call-1", name: "approve-hold", input: {} }, sessionId);
+      await executor.execute({ toolUseId: "call-2", name: "hold-flight", input: { candidateId: "flight-1" } }, sessionId);
+      await executor.execute({ toolUseId: "call-3", name: "hold-flight", input: { candidateId: "flight-2" } }, sessionId);
+
+      expect(port.receivedHoldFlightApprovedFlags).toEqual([true, false]);
+    });
+
+    it("does not consume the approval when the approved hold itself fails", async () => {
+      const port = new FakeBookingGatewayPort();
+      port.respondToApproveHoldWith(ok(undefined));
+      port.respondToHoldFlightWith(err({ type: "GatewayUnavailable", message: "Lambda timed out" }));
+      const executor = new BookingToolExecutor(port, new FakeBudgetPort(), new FakePriceCheckPort());
+      const sessionId = aRuntimeSessionId();
+
+      await executor.execute({ toolUseId: "call-1", name: "approve-hold", input: {} }, sessionId);
+      await executor.execute({ toolUseId: "call-2", name: "hold-flight", input: { candidateId: "flight-1" } }, sessionId);
+      await executor.execute({ toolUseId: "call-3", name: "hold-flight", input: { candidateId: "flight-1" } }, sessionId);
+
+      expect(port.receivedHoldFlightApprovedFlags).toEqual([true, true]);
+    });
+
+    it("keeps an approval scoped to its own session", async () => {
+      const port = new FakeBookingGatewayPort();
+      port.respondToApproveHoldWith(ok(undefined));
+      port.respondToHoldFlightWith(ok(aHold({ holdId: "hold-1" })));
+      const executor = new BookingToolExecutor(port, new FakeBudgetPort(), new FakePriceCheckPort());
+
+      await executor.execute({ toolUseId: "call-1", name: "approve-hold", input: {} }, aRuntimeSessionId("a"));
+      await executor.execute(
+        { toolUseId: "call-2", name: "hold-flight", input: { candidateId: "flight-1" } },
+        aRuntimeSessionId("b"),
+      );
+
+      expect(port.receivedHoldFlightApprovedFlags).toEqual([false]);
+    });
+  });
 });

@@ -12,7 +12,13 @@ type JsonRpcRequestBody = {
   readonly params?: { readonly name?: string; readonly arguments?: unknown };
 };
 
-export type MockToolResponse = { readonly content: unknown; readonly isError?: boolean };
+export type MockToolResponse =
+  | { readonly content: unknown; readonly isError?: boolean }
+  // The real Gateway (confirmed live, issue #20) surfaces a Policy denial as
+  // a genuine JSON-RPC-level error, not a normal result with isError:true —
+  // the MCP SDK throws an McpError for this, a different code path than the
+  // isError:true shape below.
+  | { readonly protocolError: { readonly code: number; readonly message: string } };
 
 export type ReceivedToolCall = {
   readonly name: string;
@@ -89,6 +95,10 @@ export class GatewayMockServer {
         arguments: body.params?.arguments,
         ...(policySessionHeader !== undefined ? { policySessionHeader } : {}),
       });
+    }
+
+    if ("protocolError" in response) {
+      return { jsonrpc: "2.0", id: body.id, error: response.protocolError };
     }
 
     const text = typeof response.content === "string" ? response.content : JSON.stringify(response.content);

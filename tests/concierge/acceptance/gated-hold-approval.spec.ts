@@ -29,11 +29,14 @@ vi.mock("bedrock-agentcore/browser/playwright", () => ({
 const PORT = 41829;
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 
-// Policy's Gated-hold approval gate (issue #20 / ADR-0006): a hold above the
-// flat Local-currency threshold is DENYed, the Concierge surfaces the price
-// and asks the Caller to approve, calling approve-hold and retrying the
-// hold then succeeds — driven through the real Runtime entry point with
-// only the network boundary (Gateway's MCP calls) mocked.
+// Policy's Gated-hold approval gate (issue #20 / ADR-0006, revised to
+// stateless Cedar after a Dogwood temporal engine bug — see the issue): a
+// hold above the flat Local-currency threshold is DENYed, the Concierge
+// surfaces the price and asks the Caller to approve, calling approve-hold
+// and retrying the hold with `approved: true` then succeeds — driven
+// through the real Runtime entry point with only the network boundary
+// (Gateway's MCP calls) mocked. One-time consumption is enforced by the
+// Concierge itself, not by Policy.
 describe("Gated-hold approval round trip (issue #20 / ADR-0006)", () => {
   let network: NetworkBoundary;
   let gateway: GatewayMockServer;
@@ -116,8 +119,70 @@ describe("Gated-hold approval round trip (issue #20 / ADR-0006)", () => {
     const secondResponse = await invoke(BASE_URL, sessionId, "Yes, approve it", `Bearer ${token}`);
     expect(await secondResponse.text()).toBe("Approved and held!");
 
-    expect(gateway.receivedToolCalls.filter((call) => call.name === "hold-flight")).toHaveLength(2);
+    const holdCalls = gateway.receivedToolCalls.filter((call) => call.name === "hold-flight");
+    expect(holdCalls).toHaveLength(2);
+    // Policy's approved-retry Cedar rule is stateless (issue #20 revision,
+    // ADR-0006) — it only ever sees whether this specific request carries
+    // `approved: true`, which the Concierge stamps on after approve-hold.
+    expect(holdCalls[0]?.arguments).not.toHaveProperty("approved");
+    expect(holdCalls[1]?.arguments).toMatchObject({ approved: true });
     expect(gateway.receivedToolCalls.some((call) => call.name === "approve-hold")).toBe(true);
+  });
+
+  it("gates a second, unrelated expensive hold again after the first approval is consumed (one-time consumption, issue #20 revision)", async () => {
+    gateway.respondToTool("search-flights", {
+      content: [
+        { candidateId: "flight-1", destination: "TOKYO", airline: "ANA", price: { amount: 900, currency: "JPY" } },
+        { candidateId: "flight-2", destination: "TOKYO", airline: "JAL", price: { amount: 900, currency: "JPY" } },
+      ],
+    });
+    gateway.respondToTool("hold-flight", {
+      isError: true,
+      content:
+        "AuthorizeActionException - Tool Execution Denied: Tool call not allowed due to policy enforcement [No policy applies to the request (denied by default).]",
+    });
+    gateway.respondToTool("approve-hold", { content: { approved: true } });
+    gateway.respondToTool("hold-flight", {
+      content: { holdId: "hold-flight-1", status: "held", expiresAt: "2026-09-01T00:00:00.000Z" },
+    });
+    gateway.respondToTool("hold-flight", {
+      isError: true,
+      content:
+        "AuthorizeActionException - Tool Execution Denied: Tool call not allowed due to policy enforcement [No policy applies to the request (denied by default).]",
+    });
+
+    bedrockMock
+      .on(ConverseCommand)
+      .resolvesOnce(
+        aToolUseResponse({ toolUseId: "call-1", name: "search-flights", input: { destination: "TOKYO" } }),
+      )
+      .resolvesOnce(
+        aToolUseResponse({ toolUseId: "call-2", name: "hold-flight", input: { candidateId: "flight-1" } }),
+      )
+      .resolvesOnce(aTextResponse("This flight costs 900 JPY, above your approval threshold — approve it?"))
+      .resolvesOnce(aToolUseResponse({ toolUseId: "call-3", name: "approve-hold", input: {} }))
+      .resolvesOnce(
+        aToolUseResponse({ toolUseId: "call-4", name: "hold-flight", input: { candidateId: "flight-1" } }),
+      )
+      .resolvesOnce(aTextResponse("Approved and held!"))
+      .resolvesOnce(
+        aToolUseResponse({ toolUseId: "call-5", name: "hold-flight", input: { candidateId: "flight-2" } }),
+      )
+      .resolvesOnce(aTextResponse("This flight also costs 900 JPY, above your approval threshold — approve it?"));
+
+    const token = await cognito.signToken();
+    const sessionId = aSessionId("one-time-consumption");
+
+    await invoke(BASE_URL, sessionId, "Hold the Tokyo flight", `Bearer ${token}`);
+    await invoke(BASE_URL, sessionId, "Yes, approve it", `Bearer ${token}`);
+    const thirdResponse = await invoke(BASE_URL, sessionId, "Now hold the other Tokyo flight", `Bearer ${token}`);
+
+    expect(await thirdResponse.text()).toBe(
+      "This flight also costs 900 JPY, above your approval threshold — approve it?",
+    );
+    const holdCalls = gateway.receivedToolCalls.filter((call) => call.name === "hold-flight");
+    expect(holdCalls).toHaveLength(3);
+    expect(holdCalls[2]?.arguments).not.toHaveProperty("approved");
   });
 
   it("passes below the threshold with no approval step", async () => {

@@ -12,12 +12,6 @@ function bookingAction(toolName: string): string {
   return `AgentCore::Action::"${BOOKING_GATEWAY_TARGET_NAME}___${toolName}"`;
 }
 
-// How far back the one-time-consumption temporal policy looks for an
-// unconsumed approve-hold event (issue #20 / ADR-0006) — generous relative
-// to a single planning conversation, since Policy sessions carry at most a
-// 24h look-back window regardless.
-const APPROVAL_LOOKBACK_WINDOW = "24h";
-
 const ROUTER_LAMBDA_BUNDLE_DIR = path.join(__dirname, "../../../dist/booking-gateway");
 
 // Gateway's ToolDefinition shape is a structural match for
@@ -81,7 +75,7 @@ export class BookingGatewayConstruct extends cdk.Resource {
       protocolType: "MCP",
     });
 
-    new agentcore.CfnGatewayTarget(this, "GatewayTarget", {
+    const gatewayTarget = new agentcore.CfnGatewayTarget(this, "GatewayTarget", {
       gatewayIdentifier: this.gateway.attrGatewayIdentifier,
       name: BOOKING_GATEWAY_TARGET_NAME,
       description: "Booking search+hold tools backed by the mock router Lambda",
@@ -112,6 +106,47 @@ export class BookingGatewayConstruct extends cdk.Resource {
       mode: "ENFORCE",
     };
 
+    // Gateway's own control plane (via its GenesisPolicyEngineCheck
+    // assumed-role session) needs GetPolicyEngine to read the Policy
+    // engine's definition when attaching policyEngineConfiguration below,
+    // plus AuthorizeAction and PartiallyAuthorizeActions on both the Policy
+    // engine and the Gateway to make the ALLOW/DENY call on every
+    // subsequent Gateway request (Cedar's "resource ==
+    // AgentCore::Gateway::..." clause makes the Gateway ARN itself part of
+    // the resource under evaluation, not just the engine) - per AWS's own
+    // CDK reference example for wiring a Policy engine to a Gateway. CFN
+    // has no implicit ordering between the Gateway resource and this
+    // policy statement (neither's properties reference the other), so
+    // without the explicit dependency below CloudFormation may attach the
+    // policy engine to the Gateway before the role's inline policy update
+    // actually lands.
+    const gatewayPolicyEngineAccess = new iam.Policy(this, "GatewayPolicyEngineAccess", {
+      statements: [
+        new iam.PolicyStatement({
+          actions: [
+            "bedrock-agentcore:GetPolicyEngine",
+            "bedrock-agentcore:AuthorizeAction",
+            "bedrock-agentcore:PartiallyAuthorizeActions",
+          ],
+          resources: [this.policyEngine.attrPolicyEngineArn],
+        }),
+        // A literal wildcard-suffixed ARN, not a Fn::GetAtt off `this.gateway`
+        // - referencing the Gateway's own attribute here would make this
+        // Policy implicitly depend on it, conflicting with the explicit
+        // Gateway-depends-on-Policy edge below (a circular dependency CFN
+        // rejects outright). Only one Gateway exists in this stack, so the
+        // wildcard costs nothing in practice.
+        new iam.PolicyStatement({
+          actions: ["bedrock-agentcore:AuthorizeAction", "bedrock-agentcore:PartiallyAuthorizeActions"],
+          resources: [
+            cdk.Stack.of(this).formatArn({ service: "bedrock-agentcore", resource: "gateway", resourceName: "*" }),
+          ],
+        }),
+      ],
+    });
+    gatewayRole.attachInlinePolicy(gatewayPolicyEngineAccess);
+    this.gateway.node.addDependency(gatewayPolicyEngineAccess);
+
     const holdActions = [bookingAction("hold-flight"), bookingAction("hold-hotel")].join(", ");
     const gatewayResource = `resource == AgentCore::Gateway::"${this.gateway.attrGatewayArn}"`;
 
@@ -120,12 +155,16 @@ export class BookingGatewayConstruct extends cdk.Resource {
     // targets. search-flights/search-hotels carry no gating decision of
     // their own (CONTEXT.md: only hold-flight/hold-hotel are Gated) — this
     // unconditional permit is what keeps them working at all once the
-    // engine is attached.
-    new agentcore.CfnPolicy(this, "SearchPolicy", {
+    // engine is attached. Cedar's analyzer flags any unconditional,
+    // unrestricted-principal permit as "Overly Permissive" - here that's
+    // the deliberate design (read-only, no Policy consequence), so
+    // IGNORE_ALL_FINDINGS is used instead of failing the deploy on an
+    // expected finding.
+    const searchPolicy = new agentcore.CfnPolicy(this, "SearchPolicy", {
       policyEngineId: this.policyEngine.attrPolicyEngineId,
       name: "wayfarer_search_unrestricted",
       description: "Unconditionally permits search-flights/search-hotels - read-only, no Policy consequence",
-      validationMode: "FAIL_ON_ANY_FINDINGS",
+      validationMode: "IGNORE_ALL_FINDINGS",
       definition: {
         cedar: {
           statement: `permit(
@@ -139,8 +178,15 @@ export class BookingGatewayConstruct extends cdk.Resource {
 
     // NL-generated via `agentcore add policy --generate "Only allow flight
     // and hotel holds priced at 500 or less"` (ADR-0006) — permits any hold
-    // at or under the flat threshold with no approval step.
-    new agentcore.CfnPolicy(this, "HoldThresholdPolicy", {
+    // at or under the flat threshold with no approval step. `price` is a
+    // JSON Schema "number" (tool-catalog.ts) - AgentCore's generated Cedar
+    // schema maps that to `decimal`, not `Long`, and Cedar's `<=` only
+    // accepts `Long`; decimal needs the `decimal("...")` extension
+    // constructor and its `.lessThanOrEqual(...)` method instead. `price`
+    // is also absent from hold-flight/hold-hotel's `required` array, so
+    // it's optional in the schema - Cedar's static analyzer refuses to
+    // read an optional attribute without a `has` presence guard first.
+    const holdThresholdPolicy = new agentcore.CfnPolicy(this, "HoldThresholdPolicy", {
       policyEngineId: this.policyEngine.attrPolicyEngineId,
       name: "wayfarer_hold_threshold",
       description: "Permits hold-flight/hold-hotel at or under the flat Local-currency threshold",
@@ -152,20 +198,27 @@ export class BookingGatewayConstruct extends cdk.Resource {
   action in [${holdActions}],
   ${gatewayResource}
 ) when {
-  context.input.price <= ${HOLD_APPROVAL_THRESHOLD_LOCAL_AMOUNT}
+  context.input has price &&
+  context.input.price.lessThanOrEqual(decimal("${HOLD_APPROVAL_THRESHOLD_LOCAL_AMOUNT}.0000"))
 };`,
         },
       },
     });
 
     // Hand-written Cedar: approve-hold carries no threshold of its own -
-    // always permitted so its response is recorded as an approval event for
-    // the temporal policy below to match against.
-    new agentcore.CfnPolicy(this, "ApproveHoldPolicy", {
+    // always permitted. Same deliberate "Overly Permissive" finding as
+    // SearchPolicy above, and the same IGNORE_ALL_FINDINGS reason.
+    // approve-hold no longer feeds a Policy rule directly (ADR-0006,
+    // revised) - BookingToolExecutor marks its own session approved when
+    // this call succeeds, and stamps the next hold with `approved: true`
+    // for HoldApprovedPolicy below to match. approve-hold stays a real
+    // Gateway action regardless: an explicit, traceable approval event,
+    // useful for the Observability ticket (#21).
+    const approveHoldPolicy = new agentcore.CfnPolicy(this, "ApproveHoldPolicy", {
       policyEngineId: this.policyEngine.attrPolicyEngineId,
       name: "wayfarer_approve_hold",
       description: "Unconditionally permits approve-hold so its response is recorded as an approval event",
-      validationMode: "FAIL_ON_ANY_FINDINGS",
+      validationMode: "IGNORE_ALL_FINDINGS",
       definition: {
         cedar: {
           statement: `permit(
@@ -177,40 +230,47 @@ export class BookingGatewayConstruct extends cdk.Resource {
       },
     });
 
-    // Hand-written Dogwood temporal policy (ADR-0006: AWS's own reference
-    // examples hand-write temporal conditions rather than generate them): a
-    // hold above the threshold is permitted only once per unconsumed
-    // approve-hold event — consumed by either hold type, so a second,
-    // unrelated hold attempt cannot reuse it. approve-hold carries no price
-    // of its own (ADR-0006: "no other side effect"), so this consumption
-    // isn't scoped to the specific price that prompted the approval
-    // request — any single hold up to the approval's lookback window
-    // consumes it, not necessarily the one the Caller actually saw. Binding
-    // the approval to a specific price would mean threading it through
-    // approve-hold's input and correlating it in this predicate (as the
-    // "output-to-input integrity" pattern does) — deliberately out of scope
-    // for this ticket's generic, unparameterized approve-hold action.
-    new agentcore.CfnPolicy(this, "HoldApprovalConsumptionPolicy", {
+    // Hand-written Cedar (ADR-0006, revised): a hold above the threshold is
+    // also permitted when the request itself carries `approved: true`. This
+    // replaces a Dogwood temporal one-time-consumption rule that hit an AWS
+    // platform bug on first live deploy — once any Dogwood policy is
+    // attached to a Policy engine, every action that reaches full
+    // evaluation fails with a generic internal error, independent of which
+    // Cedar policy governs it or its validationMode (see issue #20's
+    // finding). This rule is stateless and per-request by design: it has no
+    // opinion on whether the approval was already spent. One-time
+    // consumption instead lives in BookingToolExecutor, which tracks each
+    // session's unconsumed approval and only sets `approved: true` on the
+    // one hold call that follows an approve-hold success.
+    const holdApprovedPolicy = new agentcore.CfnPolicy(this, "HoldApprovedPolicy", {
       policyEngineId: this.policyEngine.attrPolicyEngineId,
-      name: "wayfarer_hold_approval_consumption",
-      description: "Permits a Gated hold once per unconsumed approve-hold event (one-time consumption)",
+      name: "wayfarer_hold_approved",
+      description: "Permits hold-flight/hold-hotel when the request carries the Caller's approval",
       validationMode: "FAIL_ON_ANY_FINDINGS",
       definition: {
-        policy: {
+        cedar: {
           statement: `permit(
   principal,
   action in [${holdActions}],
   ${gatewayResource}
-)
-when temporal {
-  !${bookingAction("hold-flight")}::response{ eventResource: resource }
-  since within ${APPROVAL_LOOKBACK_WINDOW} ${bookingAction("approve-hold")}::response{ eventResource: resource }
-  &&
-  !${bookingAction("hold-hotel")}::response{ eventResource: resource }
-  since within ${APPROVAL_LOOKBACK_WINDOW} ${bookingAction("approve-hold")}::response{ eventResource: resource }
+) when {
+  context.input has approved &&
+  context.input.approved
 };`,
         },
       },
     });
+
+    // Every policy's Cedar statement names an action from
+    // BOOKING_TOOL_DEFINITIONS (search-flights, hold-flight, approve-hold,
+    // ...) - the Policy engine only recognizes those names once
+    // GatewayTarget has registered its tool schema. Neither a Policy's
+    // properties nor the Target's reference each other, so CFN has no
+    // implicit ordering; without this explicit dependency a Policy can be
+    // created before its Target update lands, failing validation with
+    // "unrecognized action ... did you mean ...?".
+    for (const policy of [searchPolicy, holdThresholdPolicy, approveHoldPolicy, holdApprovedPolicy]) {
+      policy.node.addDependency(gatewayTarget);
+    }
   }
 }

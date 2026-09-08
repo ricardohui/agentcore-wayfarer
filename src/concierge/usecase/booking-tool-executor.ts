@@ -73,6 +73,13 @@ function serializeHold(hold: Hold, livePrice?: LocalPrice, budget?: BudgetSnapsh
 export class BookingToolExecutor implements ToolExecutor {
   private readonly flightCandidatesById = new Map<FlightCandidateId, FlightCandidate>();
   private readonly hotelCandidatesById = new Map<HotelCandidateId, HotelCandidate>();
+  // Policy's approved-retry Cedar rule (ADR-0006, revised) is stateless —
+  // it only sees whether *this* request carries `approved: true`. The
+  // one-time-consumption guarantee that used to live in a Dogwood temporal
+  // policy now lives here: a session enters this set when approve-hold
+  // succeeds, and leaves it the moment a hold sent with that approval
+  // succeeds, so a second, unrelated expensive hold is gated again.
+  private readonly approvedSessions = new Set<RuntimeSessionId>();
 
   constructor(
     private readonly bookingGateway: BookingGatewayPort,
@@ -89,9 +96,9 @@ export class BookingToolExecutor implements ToolExecutor {
 
     switch (call.name) {
       case "search-flights":
-        return this.searchFlights(call.toolUseId, input);
+        return this.searchFlights(call.toolUseId, input, sessionId);
       case "search-hotels":
-        return this.searchHotels(call.toolUseId, input);
+        return this.searchHotels(call.toolUseId, input, sessionId);
       case "hold-flight":
         return this.holdFlight(call.toolUseId, input, sessionId);
       case "hold-hotel":
@@ -101,13 +108,17 @@ export class BookingToolExecutor implements ToolExecutor {
     }
   }
 
-  private async searchFlights(toolUseId: string, input: Record<string, unknown>): Promise<ToolCallResult> {
+  private async searchFlights(
+    toolUseId: string,
+    input: Record<string, unknown>,
+    sessionId: RuntimeSessionId,
+  ): Promise<ToolCallResult> {
     const destination = parseScenarioCity(String(input.destination ?? ""));
     if (!destination.ok) {
       return toolError(toolUseId, destination.error.message);
     }
 
-    const result = await this.bookingGateway.searchFlights(destination.value);
+    const result = await this.bookingGateway.searchFlights(destination.value, sessionId);
     if (!result.ok) {
       return toolError(toolUseId, result.error.message);
     }
@@ -119,13 +130,17 @@ export class BookingToolExecutor implements ToolExecutor {
     return toolSuccess(toolUseId, { candidates: result.value.map(serializeFlightCandidate) });
   }
 
-  private async searchHotels(toolUseId: string, input: Record<string, unknown>): Promise<ToolCallResult> {
+  private async searchHotels(
+    toolUseId: string,
+    input: Record<string, unknown>,
+    sessionId: RuntimeSessionId,
+  ): Promise<ToolCallResult> {
     const city = parseScenarioCity(String(input.city ?? ""));
     if (!city.ok) {
       return toolError(toolUseId, city.error.message);
     }
 
-    const result = await this.bookingGateway.searchHotels(city.value);
+    const result = await this.bookingGateway.searchHotels(city.value, sessionId);
     if (!result.ok) {
       return toolError(toolUseId, result.error.message);
     }
@@ -145,12 +160,14 @@ export class BookingToolExecutor implements ToolExecutor {
       return toolError(toolUseId, candidateId.error.message);
     }
 
+    const approved = this.approvedSessions.has(sessionId);
     const candidate = this.flightCandidatesById.get(candidateId.value);
     if (!candidate) {
-      const result = await this.bookingGateway.holdFlight(candidateId.value, undefined, sessionId);
+      const result = await this.bookingGateway.holdFlight(candidateId.value, undefined, approved, sessionId);
       if (!result.ok) {
         return holdErrorResult(toolUseId, result.error);
       }
+      this.consumeApproval(approved, sessionId);
       return toolSuccess(toolUseId, serializeHold(result.value));
     }
 
@@ -159,10 +176,11 @@ export class BookingToolExecutor implements ToolExecutor {
       return toolError(toolUseId, livePrice.error.message);
     }
 
-    const result = await this.bookingGateway.holdFlight(candidateId.value, livePrice.value.amount, sessionId);
+    const result = await this.bookingGateway.holdFlight(candidateId.value, livePrice.value.amount, approved, sessionId);
     if (!result.ok) {
       return holdErrorResult(toolUseId, result.error, livePrice.value);
     }
+    this.consumeApproval(approved, sessionId);
     const budget = await this.budget.recordHold(sessionId, candidate.destination, "FLIGHT", livePrice.value);
     return toolSuccess(toolUseId, serializeHold(result.value, livePrice.value, budget.ok ? budget.value : undefined));
   }
@@ -177,12 +195,14 @@ export class BookingToolExecutor implements ToolExecutor {
       return toolError(toolUseId, candidateId.error.message);
     }
 
+    const approved = this.approvedSessions.has(sessionId);
     const candidate = this.hotelCandidatesById.get(candidateId.value);
     if (!candidate) {
-      const result = await this.bookingGateway.holdHotel(candidateId.value, undefined, sessionId);
+      const result = await this.bookingGateway.holdHotel(candidateId.value, undefined, approved, sessionId);
       if (!result.ok) {
         return holdErrorResult(toolUseId, result.error);
       }
+      this.consumeApproval(approved, sessionId);
       return toolSuccess(toolUseId, serializeHold(result.value));
     }
 
@@ -191,10 +211,11 @@ export class BookingToolExecutor implements ToolExecutor {
       return toolError(toolUseId, livePrice.error.message);
     }
 
-    const result = await this.bookingGateway.holdHotel(candidateId.value, livePrice.value.amount, sessionId);
+    const result = await this.bookingGateway.holdHotel(candidateId.value, livePrice.value.amount, approved, sessionId);
     if (!result.ok) {
       return holdErrorResult(toolUseId, result.error, livePrice.value);
     }
+    this.consumeApproval(approved, sessionId);
     const budget = await this.budget.recordHold(sessionId, candidate.city, "HOTEL", livePrice.value);
     return toolSuccess(toolUseId, serializeHold(result.value, livePrice.value, budget.ok ? budget.value : undefined));
   }
@@ -204,7 +225,14 @@ export class BookingToolExecutor implements ToolExecutor {
     if (!result.ok) {
       return toolError(toolUseId, result.error.message);
     }
+    this.approvedSessions.add(sessionId);
     return toolSuccess(toolUseId, { approved: true });
+  }
+
+  private consumeApproval(wasApproved: boolean, sessionId: RuntimeSessionId): void {
+    if (wasApproved) {
+      this.approvedSessions.delete(sessionId);
+    }
   }
 }
 

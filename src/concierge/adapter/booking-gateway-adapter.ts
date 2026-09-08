@@ -15,13 +15,6 @@ import type { FetchLike } from "./sigv4-fetch";
 
 const CLIENT_INFO = { name: "wayfarer-concierge", version: "1.0.0" };
 
-// Session-based temporal policies (issue #20 / ADR-0006) evaluate a Cedar
-// trajectory scoped to whatever session ID a request carries under this
-// header — passing the Concierge's own RuntimeSessionId here is what lets
-// Policy's one-time-consumption rule correlate a Caller's approve-hold
-// event with their own later hold-flight/hold-hotel retry.
-const POLICY_SESSION_HEADER = "x-amzn-bedrock-agentcore-policy-session-id";
-
 // Policy's own wording for a denied tool call (see "Use an AgentCore
 // Gateway with Policy in AgentCore") — distinguishes a Gated hold from a
 // genuine Gateway failure so the two surface as different GatewayError
@@ -37,13 +30,28 @@ function isPolicyDenial(message: string): boolean {
 // SigV4-signed fetch. Opens one MCP session per call — this ticket's scenario
 // beat is search-then-hold, not a chatty tool-call sequence, so session reuse
 // isn't worth the added lifecycle state yet.
+//
+// Every public method still accepts sessionId (BookingGatewayPort's shape —
+// BookingToolExecutor uses it for its own approvedSessions bookkeeping) but
+// none of them forward it to Gateway. Confirmed live (issue #20 revision):
+// the Policy session header this adapter used to send made every single
+// Gateway action fail with a generic "An internal error occurred", entirely
+// independent of the Policy engine's policy content — reproduced with a
+// Dogwood temporal policy attached, and again after removing every temporal
+// policy and leaving only stateless Cedar. Dropping the header (confirmed
+// via a direct probe against the live Gateway with no header at all) is
+// what actually fixed it — not the stateless-Cedar redesign itself, which
+// only removed a rule this header was never required for.
 export class BookingGatewayAdapter implements BookingGatewayPort {
   constructor(
     private readonly gatewayUrl: string,
     private readonly fetch: FetchLike,
   ) {}
 
-  async searchFlights(destination: ScenarioCity): Promise<Result<readonly FlightCandidate[], GatewayError>> {
+  async searchFlights(
+    destination: ScenarioCity,
+    _sessionId: RuntimeSessionId,
+  ): Promise<Result<readonly FlightCandidate[], GatewayError>> {
     const result = await this.callTool("search-flights", { destination });
     if (!result.ok) {
       return result;
@@ -51,7 +59,10 @@ export class BookingGatewayAdapter implements BookingGatewayPort {
     return parseCandidateList(result.value, (item) => FlightCandidate.parse(item));
   }
 
-  async searchHotels(city: ScenarioCity): Promise<Result<readonly HotelCandidate[], GatewayError>> {
+  async searchHotels(
+    city: ScenarioCity,
+    _sessionId: RuntimeSessionId,
+  ): Promise<Result<readonly HotelCandidate[], GatewayError>> {
     const result = await this.callTool("search-hotels", { city });
     if (!result.ok) {
       return result;
@@ -62,13 +73,10 @@ export class BookingGatewayAdapter implements BookingGatewayPort {
   async holdFlight(
     candidateId: FlightCandidateId,
     price: number | undefined,
-    sessionId: RuntimeSessionId,
+    approved: boolean,
+    _sessionId: RuntimeSessionId,
   ): Promise<Result<Hold, GatewayError>> {
-    const result = await this.callTool(
-      "hold-flight",
-      price !== undefined ? { candidateId, price } : { candidateId },
-      sessionId,
-    );
+    const result = await this.callTool("hold-flight", holdArguments(candidateId, price, approved));
     if (!result.ok) {
       return result;
     }
@@ -78,32 +86,25 @@ export class BookingGatewayAdapter implements BookingGatewayPort {
   async holdHotel(
     candidateId: HotelCandidateId,
     price: number | undefined,
-    sessionId: RuntimeSessionId,
+    approved: boolean,
+    _sessionId: RuntimeSessionId,
   ): Promise<Result<Hold, GatewayError>> {
-    const result = await this.callTool(
-      "hold-hotel",
-      price !== undefined ? { candidateId, price } : { candidateId },
-      sessionId,
-    );
+    const result = await this.callTool("hold-hotel", holdArguments(candidateId, price, approved));
     if (!result.ok) {
       return result;
     }
     return toGatewayResult(Hold.parse(result.value));
   }
 
-  async approveHold(sessionId: RuntimeSessionId): Promise<Result<void, GatewayError>> {
-    const result = await this.callTool("approve-hold", {}, sessionId);
+  async approveHold(_sessionId: RuntimeSessionId): Promise<Result<void, GatewayError>> {
+    const result = await this.callTool("approve-hold", {});
     if (!result.ok) {
       return result;
     }
     return ok(undefined);
   }
 
-  private async callTool(
-    operation: string,
-    args: Record<string, unknown>,
-    policySessionId?: RuntimeSessionId,
-  ): Promise<Result<unknown, GatewayError>> {
+  private async callTool(operation: string, args: Record<string, unknown>): Promise<Result<unknown, GatewayError>> {
     const client = new Client(CLIENT_INFO);
     const transport = new StreamableHTTPClientTransport(new URL(this.gatewayUrl), {
       // FetchLike is pinned to undici's own Request/Response types (see
@@ -111,9 +112,6 @@ export class BookingGatewayAdapter implements BookingGatewayPort {
       // the ambient global fetch types instead — structurally the same
       // function at runtime, just an upstream typing mismatch.
       fetch: this.fetch as unknown as typeof fetch,
-      ...(policySessionId
-        ? { requestInit: { headers: { [POLICY_SESSION_HEADER]: policySessionId } } }
-        : {}),
     });
 
     try {
@@ -136,10 +134,16 @@ export class BookingGatewayAdapter implements BookingGatewayPort {
       }
       return ok(extractJson(response.content));
     } catch (error) {
-      return err({
-        type: "GatewayUnavailable",
-        message: error instanceof Error ? error.message : String(error),
-      });
+      // Confirmed live against the deployed Gateway (issue #20): a Policy
+      // denial arrives as a genuine JSON-RPC-level error — the MCP SDK
+      // throws an McpError for it — not as a normal result with
+      // isError:true. Both shapes carry the same policy-enforcement wording,
+      // so the same isPolicyDenial check applies here too.
+      const message = error instanceof Error ? error.message : String(error);
+      if (isPolicyDenial(message)) {
+        return err({ type: "HoldGated", message });
+      }
+      return err({ type: "GatewayUnavailable", message });
     } finally {
       // A close() failure must never override the try/catch's Result — it
       // would otherwise reject the whole call (discarding a sibling tool
@@ -147,6 +151,22 @@ export class BookingGatewayAdapter implements BookingGatewayPort {
       await client.close().catch(() => undefined);
     }
   }
+}
+
+// `price`/`approved` are omitted rather than sent as `undefined`/`false`
+// when they don't apply — matches tool-catalog.ts's "optional, model must
+// not set" schema for both fields, and keeps the wire payload matching what
+// Policy's Cedar `has` presence guards expect on a plain (non-Gated) hold.
+function holdArguments(
+  candidateId: string,
+  price: number | undefined,
+  approved: boolean,
+): Record<string, unknown> {
+  return {
+    candidateId,
+    ...(price !== undefined ? { price } : {}),
+    ...(approved ? { approved: true } : {}),
+  };
 }
 
 type TextContentBlock = { readonly type: "text"; readonly text: string };

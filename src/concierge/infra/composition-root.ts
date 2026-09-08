@@ -6,6 +6,7 @@ import { BrowserToolPriceCheckAdapter } from "../adapter/browser-tool-price-chec
 import { CodeInterpreterBudgetAdapter } from "../adapter/code-interpreter-budget-adapter";
 import { CognitoJwtVerifier } from "../adapter/cognito-jwt-verifier";
 import { BookingGatewayAdapter } from "../adapter/booking-gateway-adapter";
+import { createDecimalPriceFetch } from "../adapter/decimal-price-fetch";
 import { DelegatedCalendarAdapter } from "../adapter/delegated-calendar-adapter";
 import { InMemorySessionLock } from "../adapter/in-memory-session-lock";
 import { createSigV4Fetch } from "../adapter/sigv4-fetch";
@@ -32,7 +33,7 @@ export function buildConciergePorts(): RespondToCallerMessagePorts {
 
   const bookingGateway = new BookingGatewayAdapter(
     gatewayUrl,
-    createSigV4Fetch(region, GATEWAY_SIGNING_SERVICE),
+    createDecimalPriceFetch(createSigV4Fetch(region, GATEWAY_SIGNING_SERVICE)),
   );
   const identityClient = new BedrockAgentCoreClient({ region });
   const calendar = new DelegatedCalendarAdapter(identityClient, calendarCredentialProviderName, calendarApiUrl);

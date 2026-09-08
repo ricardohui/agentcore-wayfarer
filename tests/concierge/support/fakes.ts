@@ -127,8 +127,10 @@ export class FakeBookingGatewayPort implements BookingGatewayPort {
   public receivedSearchHotelsCities: ScenarioCity[] = [];
   public receivedHoldFlightCandidateIds: FlightCandidateId[] = [];
   public receivedHoldFlightPrices: (number | undefined)[] = [];
+  public receivedHoldFlightApprovedFlags: boolean[] = [];
   public receivedHoldHotelCandidateIds: HotelCandidateId[] = [];
   public receivedHoldHotelPrices: (number | undefined)[] = [];
+  public receivedHoldHotelApprovedFlags: boolean[] = [];
   public receivedApproveHoldSessionIds: RuntimeSessionId[] = [];
 
   private nextSearchFlights: Result<readonly FlightCandidate[], GatewayError> | undefined;
@@ -159,6 +161,7 @@ export class FakeBookingGatewayPort implements BookingGatewayPort {
 
   async searchFlights(
     destination: ScenarioCity,
+    _sessionId: RuntimeSessionId,
   ): Promise<Result<readonly FlightCandidate[], GatewayError>> {
     this.receivedSearchFlightsDestinations.push(destination);
     if (!this.nextSearchFlights) {
@@ -167,7 +170,10 @@ export class FakeBookingGatewayPort implements BookingGatewayPort {
     return this.nextSearchFlights;
   }
 
-  async searchHotels(city: ScenarioCity): Promise<Result<readonly HotelCandidate[], GatewayError>> {
+  async searchHotels(
+    city: ScenarioCity,
+    _sessionId: RuntimeSessionId,
+  ): Promise<Result<readonly HotelCandidate[], GatewayError>> {
     this.receivedSearchHotelsCities.push(city);
     if (!this.nextSearchHotels) {
       throw new Error("FakeBookingGatewayPort.searchHotels called before respondToSearchHotelsWith");
@@ -178,10 +184,12 @@ export class FakeBookingGatewayPort implements BookingGatewayPort {
   async holdFlight(
     candidateId: FlightCandidateId,
     price: number | undefined,
+    approved: boolean,
     _sessionId: RuntimeSessionId,
   ): Promise<Result<Hold, GatewayError>> {
     this.receivedHoldFlightCandidateIds.push(candidateId);
     this.receivedHoldFlightPrices.push(price);
+    this.receivedHoldFlightApprovedFlags.push(approved);
     if (!this.nextHoldFlight) {
       throw new Error("FakeBookingGatewayPort.holdFlight called before respondToHoldFlightWith");
     }
@@ -191,10 +199,12 @@ export class FakeBookingGatewayPort implements BookingGatewayPort {
   async holdHotel(
     candidateId: HotelCandidateId,
     price: number | undefined,
+    approved: boolean,
     _sessionId: RuntimeSessionId,
   ): Promise<Result<Hold, GatewayError>> {
     this.receivedHoldHotelCandidateIds.push(candidateId);
     this.receivedHoldHotelPrices.push(price);
+    this.receivedHoldHotelApprovedFlags.push(approved);
     if (!this.nextHoldHotel) {
       throw new Error("FakeBookingGatewayPort.holdHotel called before respondToHoldHotelWith");
     }

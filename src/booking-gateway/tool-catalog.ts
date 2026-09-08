@@ -32,6 +32,15 @@ const PRICE_PROPERTY = {
   description: "Do not set — populated automatically from the candidate's previously searched price.",
 } as const;
 
+// Do not set — populated automatically once the Caller has approved a prior
+// Gated hold in this session (issue #20 / ADR-0006, revised). Lets Policy's
+// approved-retry Cedar rule stay stateless: it only reads whether *this*
+// request carries `approved: true`, never a session's history.
+const APPROVED_PROPERTY = {
+  type: "boolean",
+  description: "Do not set — populated automatically once the Caller has approved a prior Gated hold.",
+} as const;
+
 export const BOOKING_TOOL_DEFINITIONS: readonly BookingToolDefinition[] = [
   {
     name: "search-flights",
@@ -56,7 +65,7 @@ export const BOOKING_TOOL_DEFINITIONS: readonly BookingToolDefinition[] = [
     description: "Place a tentative hold on a flight candidate returned by search-flights.",
     inputSchema: {
       type: "object",
-      properties: { candidateId: { type: "string" }, price: PRICE_PROPERTY },
+      properties: { candidateId: { type: "string" }, price: PRICE_PROPERTY, approved: APPROVED_PROPERTY },
       required: ["candidateId"],
     },
   },
@@ -65,7 +74,7 @@ export const BOOKING_TOOL_DEFINITIONS: readonly BookingToolDefinition[] = [
     description: "Place a tentative hold on a hotel candidate returned by search-hotels.",
     inputSchema: {
       type: "object",
-      properties: { candidateId: { type: "string" }, price: PRICE_PROPERTY },
+      properties: { candidateId: { type: "string" }, price: PRICE_PROPERTY, approved: APPROVED_PROPERTY },
       required: ["candidateId"],
     },
   },
