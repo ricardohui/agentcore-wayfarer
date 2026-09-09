@@ -320,6 +320,51 @@ resources).
 
 Source: issue #20, acceptance criterion 7.
 
+## REQ-KB-001 — A destination question is answered from retrieved Knowledge Base content
+
+A Caller's destination-related question (e.g. "what's the visa situation for city X?") is
+answered using content retrieved from the Knowledge Base's `retrieve-destination-guide` tool,
+not the model's own unaided knowledge — the retrieve call is agent-discretion (called when the
+question looks destination-related), not forced at a fixed pipeline point.
+
+Source: issue #21, acceptance criteria 1 and 3.
+
+## REQ-KB-002 — All 3 scenario cities have queryable destination-guide content
+
+Each of Wayfarer's 3 scenario cities (TOKYO, PARIS, NEW_YORK) has one authored destination-guide
+document (visa/entry requirements, climate, customs, packing advice), ingested into the Knowledge
+Base via its S3 connector and queryable via `retrieve`.
+
+Source: issue #21, acceptance criterion 2.
+
+## REQ-KB-003 — Destination-guide retrieval is read-only and ungated
+
+No Policy rule gates or otherwise constrains the destination-guide retrieve tool — same
+unconditional-permit treatment as `search-flights`/`search-hotels` (ADR-0006's Policy engine
+denies by default once attached, so an explicit unconditional Cedar policy is what keeps it
+callable).
+
+Source: issue #21, acceptance criterion 4.
+
+## REQ-KB-004 — The destination-guide retrieval flow is driven through the real Runtime entry point
+
+An acceptance test asks a destination question through the real `/invocations` entry point,
+network boundary mocked (Gateway's Knowledge Base connector target), and asserts the reply is
+traceable to retrieved Knowledge Base content, not a model-invented answer.
+
+Source: issue #21, acceptance criterion 5 (`tests/concierge/acceptance/destination-guide-retrieval.spec.ts`).
+
+## REQ-KB-005 — Knowledge Base's infrastructure is fully CDK-provisioned
+
+A Bedrock **Managed** Knowledge Base (`type: MANAGED`, service-managed embedding model — no
+vector store to provision), its S3 content bucket (3 authored per-city docs deployed via
+`BucketDeployment`), its S3 data source, and a second Gateway target on the existing booking
+Gateway (AgentCore's native `bedrock-knowledge-bases` connector, `Retrieve` tool only) are all
+provisioned by CDK — no console or bare-CLI provisioning. Verified by `cdk synth` succeeding, not
+an automated test, same as REQ-GATEWAY-004.
+
+Source: issue #21, acceptance criterion 6.
+
 ## Changelog
 
 - 2026-08-28 — Added REQ-RUNTIME-001, REQ-RUNTIME-002, REQ-RUNTIME-003 for the Runtime
@@ -381,3 +426,15 @@ Source: issue #20, acceptance criterion 7.
   Gateway it's attached to, not just the ones a policy targets, so an unconditional
   `wayfarer_search_unrestricted` Cedar policy permits `search-flights`/`search-hotels` — without
   it, ENFORCE mode would silently deny the read-only search tools issue #15 already shipped.
+- 2026-09-08 — Added REQ-KB-001 through REQ-KB-005 for Knowledge Base's destination-guide
+  retrieval via Gateway (issue #21 / ADR-0009). A Bedrock Managed Knowledge Base, fronted by a
+  second, distinct Gateway target using AgentCore's native `bedrock-knowledge-bases` connector
+  (not a Lambda/OpenAPI target like issue #15's booking target), exposes a `Retrieve` MCP tool.
+  The Concierge's own `retrieve-destination-guide` tool (`KnowledgeBaseToolExecutor`,
+  `KnowledgeBaseGatewayAdapter`) wraps that connector's nested `retrievalQuery.text` wire shape
+  behind a flat `query` argument, the same translation pattern `BookingToolExecutor` already
+  uses for its own tools. Read-only and ungated: an unconditional Cedar policy on the shared
+  Policy engine (attached to the same booking Gateway, ENFORCE mode) permits the `retrieve`
+  action, mirroring `wayfarer_search_unrestricted` from issue #20 — without it, ENFORCE mode
+  would silently deny this new action too, the same reasoning that already applies to
+  search-flights/search-hotels.

@@ -6,6 +6,8 @@ import type { Construct } from "constructs";
 import { CONCIERGE_MODEL_ID } from "../../../src/concierge/infra/model-id";
 import { BookingGatewayConstruct } from "./booking-gateway-construct";
 import { IdentityConstruct } from "./identity-construct";
+import { KnowledgeBaseConstruct } from "./knowledge-base-construct";
+import { KnowledgeBaseGatewayTargetConstruct } from "./knowledge-base-gateway-target-construct";
 import { PriceCheckSiteConstruct } from "./price-check-site-construct";
 
 const HANDLER_BUNDLE_DIR = path.join(__dirname, "../../../dist/concierge");
@@ -13,6 +15,8 @@ const HANDLER_BUNDLE_DIR = path.join(__dirname, "../../../dist/concierge");
 export class ConciergeStack extends cdk.Stack {
   public readonly runtime: agentcore.Runtime;
   public readonly bookingGateway: BookingGatewayConstruct;
+  public readonly knowledgeBase: KnowledgeBaseConstruct;
+  public readonly destinationGuidesTarget: KnowledgeBaseGatewayTargetConstruct;
   public readonly memory: agentcore.Memory;
   public readonly identity: IdentityConstruct;
   public readonly codeInterpreter: agentcore.CodeInterpreterCustom;
@@ -25,6 +29,19 @@ export class ConciergeStack extends cdk.Stack {
     this.bookingGateway = new BookingGatewayConstruct(this, "BookingGateway");
     this.identity = new IdentityConstruct(this, "Identity");
     this.priceCheckSite = new PriceCheckSiteConstruct(this, "PriceCheckSite");
+
+    // Knowledge Base's destination-guide retrieval (issue #21 / ADR-0009): a
+    // second, distinct target on the same booking Gateway above, fronting a
+    // Bedrock Managed Knowledge Base via AgentCore's native
+    // `bedrock-knowledge-bases` connector.
+    this.knowledgeBase = new KnowledgeBaseConstruct(this, "KnowledgeBase");
+    this.destinationGuidesTarget = new KnowledgeBaseGatewayTargetConstruct(this, "DestinationGuidesTarget", {
+      gateway: this.bookingGateway.gateway,
+      gatewayRole: this.bookingGateway.gatewayRole,
+      policyEngine: this.bookingGateway.policyEngine,
+      knowledgeBaseId: this.knowledgeBase.knowledgeBase.attrKnowledgeBaseId,
+      bookingGatewayTarget: this.bookingGateway.bookingGatewayTarget,
+    });
 
     // Browser Tool's price-check (issue #19 / ADR-0005): PUBLIC network mode
     // (the default) — the mock price-check site is a public S3 static
@@ -156,5 +173,7 @@ export class ConciergeStack extends cdk.Stack {
     new cdk.CfnOutput(this, "CodeInterpreterId", { value: this.codeInterpreter.codeInterpreterId });
     new cdk.CfnOutput(this, "PriceCheckSiteUrl", { value: this.priceCheckSite.siteUrl });
     new cdk.CfnOutput(this, "PriceCheckBrowserId", { value: this.priceCheckBrowser.browserId });
+    new cdk.CfnOutput(this, "KnowledgeBaseId", { value: this.knowledgeBase.knowledgeBase.attrKnowledgeBaseId });
+    new cdk.CfnOutput(this, "KnowledgeBaseDataSourceId", { value: this.knowledgeBase.dataSource.attrDataSourceId });
   }
 }

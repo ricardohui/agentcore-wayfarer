@@ -15,6 +15,7 @@ import type { ConversationTurn } from "../domain/conversation-turn";
 import { err, ok, type Result } from "../domain/result";
 import type { RuntimeSessionId } from "../domain/runtime-session-id";
 import { CALENDAR_TOOL_DEFINITIONS } from "../usecase/calendar-tool-catalog";
+import { KNOWLEDGE_BASE_TOOL_DEFINITIONS } from "../usecase/knowledge-base-tool-catalog";
 import type { ModelClient, ModelError, ToolCall, ToolExecutor } from "../usecase/ports";
 
 const MAX_OUTPUT_TOKENS = 1024;
@@ -28,10 +29,11 @@ const MAX_TOOL_USE_ROUNDS = 8;
 // The Concierge is the client-side tool-use loop (Harness's declarative
 // `agentcore_gateway` tool is the alternative, comparison-build path per
 // ADR-0002), so it declares this contract to the model itself, built from
-// the same BOOKING_TOOL_DEFINITIONS Gateway's own target enforces, plus
-// issue #17's Concierge-owned calendar-write tool (not a Gateway target).
+// the same BOOKING_TOOL_DEFINITIONS Gateway's own target enforces, issue
+// #17's Concierge-owned calendar-write tool (not a Gateway target), and
+// issue #21's destination-guide retrieve tool (a second Gateway target).
 const TOOL_CONFIG: ToolConfiguration = {
-  tools: [...BOOKING_TOOL_DEFINITIONS, ...CALENDAR_TOOL_DEFINITIONS].map((definition) => ({
+  tools: [...BOOKING_TOOL_DEFINITIONS, ...CALENDAR_TOOL_DEFINITIONS, ...KNOWLEDGE_BASE_TOOL_DEFINITIONS].map((definition) => ({
     toolSpec: {
       name: definition.name,
       description: definition.description,

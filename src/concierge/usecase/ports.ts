@@ -9,6 +9,7 @@ import type { CallerPreference } from "../domain/caller-preference";
 import type { ConciergeReply } from "../domain/concierge-reply";
 import type { ConversationTurn } from "../domain/conversation-turn";
 import type { DelegatedCredentialError } from "../domain/delegated-credential-error";
+import type { DestinationGuideExcerpt } from "../domain/destination-guide-excerpt";
 import type { FlightCandidate, FlightCandidateId } from "../domain/flight-candidate";
 import type { GatewayError } from "../domain/gateway-error";
 import type { Hold, HoldId } from "../domain/hold";
@@ -156,6 +157,16 @@ export interface PriceCheckPort {
     candidateId: FlightCandidateId | HotelCandidateId,
     city: ScenarioCity,
   ): Promise<Result<LocalPrice, PriceCheckError>>;
+}
+
+// Knowledge Base's destination-guide retrieval (issue #21 / ADR-0009): a
+// second, distinct Gateway target (AgentCore's native `bedrock-knowledge-bases`
+// connector, not a Lambda/OpenAPI target like BookingGatewayPort's) fronting a
+// Bedrock Managed Knowledge Base. Read-only and ungated — no Policy
+// consequence, same treatment as search-flights/search-hotels — so unlike
+// BookingGatewayPort this takes no sessionId and returns no Gated variant.
+export interface KnowledgeBasePort {
+  retrieve(query: string): Promise<Result<readonly DestinationGuideExcerpt[], GatewayError>>;
 }
 
 export interface SessionLock {

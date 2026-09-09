@@ -36,6 +36,11 @@ export class BookingGatewayConstruct extends cdk.Resource {
   public readonly gateway: agentcore.CfnGateway;
   public readonly routerLambda: lambda.Function;
   public readonly policyEngine: agentcore.CfnPolicyEngine;
+  // Exposed so KnowledgeBaseGatewayTargetConstruct (issue #21 / ADR-0009) can
+  // attach a second target's permissions to this same Gateway's service role,
+  // and order its own Cedar policy after this target's tool schema lands.
+  public readonly gatewayRole: iam.Role;
+  public readonly bookingGatewayTarget: agentcore.CfnGatewayTarget;
 
   constructor(scope: Construct, id: string) {
     super(scope, id);
@@ -50,7 +55,7 @@ export class BookingGatewayConstruct extends cdk.Resource {
       timeout: cdk.Duration.seconds(10),
     });
 
-    const gatewayRole = new iam.Role(this, "GatewayRole", {
+    this.gatewayRole = new iam.Role(this, "GatewayRole", {
       description: "Wayfarer booking Gateway's service role - invokes the mock router Lambda",
       assumedBy: new iam.ServicePrincipal("bedrock-agentcore.amazonaws.com", {
         conditions: {
@@ -65,17 +70,17 @@ export class BookingGatewayConstruct extends cdk.Resource {
         },
       }),
     });
-    this.routerLambda.grantInvoke(gatewayRole);
+    this.routerLambda.grantInvoke(this.gatewayRole);
 
     this.gateway = new agentcore.CfnGateway(this, "Gateway", {
       name: "wayfarer-booking-gateway",
       description: "Wayfarer booking Gateway - search and hold (issue #15)",
-      roleArn: gatewayRole.roleArn,
+      roleArn: this.gatewayRole.roleArn,
       authorizerType: "AWS_IAM",
       protocolType: "MCP",
     });
 
-    const gatewayTarget = new agentcore.CfnGatewayTarget(this, "GatewayTarget", {
+    this.bookingGatewayTarget = new agentcore.CfnGatewayTarget(this, "GatewayTarget", {
       gatewayIdentifier: this.gateway.attrGatewayIdentifier,
       name: BOOKING_GATEWAY_TARGET_NAME,
       description: "Booking search+hold tools backed by the mock router Lambda",
@@ -144,7 +149,7 @@ export class BookingGatewayConstruct extends cdk.Resource {
         }),
       ],
     });
-    gatewayRole.attachInlinePolicy(gatewayPolicyEngineAccess);
+    this.gatewayRole.attachInlinePolicy(gatewayPolicyEngineAccess);
     this.gateway.node.addDependency(gatewayPolicyEngineAccess);
 
     const holdActions = [bookingAction("hold-flight"), bookingAction("hold-hotel")].join(", ");
@@ -270,7 +275,7 @@ export class BookingGatewayConstruct extends cdk.Resource {
     // created before its Target update lands, failing validation with
     // "unrecognized action ... did you mean ...?".
     for (const policy of [searchPolicy, holdThresholdPolicy, approveHoldPolicy, holdApprovedPolicy]) {
-      policy.node.addDependency(gatewayTarget);
+      policy.node.addDependency(this.bookingGatewayTarget);
     }
   }
 }

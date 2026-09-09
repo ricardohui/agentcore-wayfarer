@@ -6,6 +6,7 @@ import type { CallerMessage } from "../../../src/concierge/domain/caller-message
 import type { CallerPreference } from "../../../src/concierge/domain/caller-preference";
 import type { ConciergeReply } from "../../../src/concierge/domain/concierge-reply";
 import type { ConversationTurn } from "../../../src/concierge/domain/conversation-turn";
+import type { DestinationGuideExcerpt } from "../../../src/concierge/domain/destination-guide-excerpt";
 import type { FlightCandidate, FlightCandidateId } from "../../../src/concierge/domain/flight-candidate";
 import type { GatewayError } from "../../../src/concierge/domain/gateway-error";
 import type { Hold } from "../../../src/concierge/domain/hold";
@@ -19,6 +20,7 @@ import type { ScenarioCity } from "../../../src/concierge/domain/scenario-city";
 import type {
   BookingGatewayPort,
   BudgetPort,
+  KnowledgeBasePort,
   MemoryPort,
   ModelClient,
   ModelError,
@@ -242,6 +244,23 @@ export class FakeBudgetPort implements BudgetPort {
     this.receivedRecordHoldCalls.push({ sessionId, city, category, price });
     if (!this.nextResult) {
       throw new Error("FakeBudgetPort.recordHold called before respondToRecordHoldWith");
+    }
+    return this.nextResult;
+  }
+}
+
+export class FakeKnowledgeBasePort implements KnowledgeBasePort {
+  public receivedQueries: string[] = [];
+  private nextResult: Result<readonly DestinationGuideExcerpt[], GatewayError> | undefined;
+
+  respondToRetrieveWith(result: Result<readonly DestinationGuideExcerpt[], GatewayError>): void {
+    this.nextResult = result;
+  }
+
+  async retrieve(query: string): Promise<Result<readonly DestinationGuideExcerpt[], GatewayError>> {
+    this.receivedQueries.push(query);
+    if (!this.nextResult) {
+      throw new Error("FakeKnowledgeBasePort.retrieve called before respondToRetrieveWith");
     }
     return this.nextResult;
   }

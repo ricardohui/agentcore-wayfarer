@@ -9,10 +9,12 @@ import { BookingGatewayAdapter } from "../adapter/booking-gateway-adapter";
 import { createDecimalPriceFetch } from "../adapter/decimal-price-fetch";
 import { DelegatedCalendarAdapter } from "../adapter/delegated-calendar-adapter";
 import { InMemorySessionLock } from "../adapter/in-memory-session-lock";
+import { KnowledgeBaseGatewayAdapter } from "../adapter/knowledge-base-gateway-adapter";
 import { createSigV4Fetch } from "../adapter/sigv4-fetch";
 import { BOOKING_TOOL_NAMES, BookingToolExecutor } from "../usecase/booking-tool-executor";
 import { CALENDAR_TOOL_NAMES, CalendarToolExecutor } from "../usecase/calendar-tool-executor";
 import { CompositeToolExecutor } from "../usecase/composite-tool-executor";
+import { KNOWLEDGE_BASE_TOOL_NAMES, KnowledgeBaseToolExecutor } from "../usecase/knowledge-base-tool-executor";
 import type { JwtVerifierPort } from "../usecase/ports";
 import type { RespondToCallerMessagePorts } from "../usecase/respond-to-caller-message";
 import { CONCIERGE_MODEL_ID } from "./model-id";
@@ -39,6 +41,7 @@ export function buildConciergePorts(): RespondToCallerMessagePorts {
   const calendar = new DelegatedCalendarAdapter(identityClient, calendarCredentialProviderName, calendarApiUrl);
   const budget = new CodeInterpreterBudgetAdapter(identityClient, codeInterpreterId);
   const priceCheck = new BrowserToolPriceCheckAdapter(region, browserId, priceCheckSiteUrl);
+  const knowledgeBase = new KnowledgeBaseGatewayAdapter(gatewayUrl, createSigV4Fetch(region, GATEWAY_SIGNING_SERVICE));
 
   return {
     modelClient: new BedrockConverseModelClient(new BedrockRuntimeClient({ region }), modelId),
@@ -47,6 +50,7 @@ export function buildConciergePorts(): RespondToCallerMessagePorts {
     toolExecutor: new CompositeToolExecutor([
       { toolNames: BOOKING_TOOL_NAMES, executor: new BookingToolExecutor(bookingGateway, budget, priceCheck) },
       { toolNames: CALENDAR_TOOL_NAMES, executor: new CalendarToolExecutor(calendar) },
+      { toolNames: KNOWLEDGE_BASE_TOOL_NAMES, executor: new KnowledgeBaseToolExecutor(knowledgeBase) },
     ]),
   };
 }
