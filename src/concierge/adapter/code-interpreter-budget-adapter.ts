@@ -13,6 +13,7 @@ import type { LocalPrice } from "../domain/local-price";
 import { err, ok, type Result } from "../domain/result";
 import type { RuntimeSessionId } from "../domain/runtime-session-id";
 import type { ScenarioCity } from "../domain/scenario-city";
+import { withSpan } from "../observability/tracing";
 import type { BudgetPort } from "../usecase/ports";
 
 // ADR-0004: a static mock rate table, not a live forex API — every Local
@@ -49,40 +50,54 @@ export class CodeInterpreterBudgetAdapter implements BudgetPort {
     category: BudgetCategory,
     price: LocalPrice,
   ): Promise<Result<BudgetSnapshot, BudgetError>> {
-    let sandboxSessionId: string;
-    try {
-      sandboxSessionId = await this.ensureSandboxSession(sessionId);
-    } catch (error) {
-      return err(toSandboxUnavailable(error));
-    }
+    // Code Interpreter span (issue #24 / ADR-0008): budget figures stay
+    // visible, unredacted — they aren't a credential, and they're the
+    // substance a reviewer needs to judge the session.
+    return withSpan(
+      "executeCode",
+      { "gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": "executeCode", "session.id": sessionId, "budget.city": city, "budget.category": category, "budget.local_price": `${price.amount} ${price.currency}` },
+      async (span) => {
+        let sandboxSessionId: string;
+        try {
+          sandboxSessionId = await this.ensureSandboxSession(sessionId);
+        } catch (error) {
+          const budgetError = toSandboxUnavailable(error);
+          span.setAttribute("gen_ai.tool.call.result", JSON.stringify(budgetError));
+          return err(budgetError);
+        }
 
-    let response;
-    try {
-      response = await this.client.send(
-        new InvokeCodeInterpreterCommand({
-          codeInterpreterIdentifier: this.codeInterpreterIdentifier,
-          sessionId: sandboxSessionId,
-          name: "executeCode",
-          arguments: {
-            code: buildBudgetConversionScript(city, category, price),
-            language: "python",
-            clearContext: false,
-          },
-        }),
-      );
-    } catch (error) {
-      // The cached session may itself be stale (expired server-side, or the
-      // request never reached it) — drop it so the next hold starts fresh
-      // instead of retrying against a session that will never work again.
-      this.sandboxSessionByRuntimeSession.delete(sessionId);
-      return err(toSandboxUnavailable(error));
-    }
+        let response;
+        try {
+          response = await this.client.send(
+            new InvokeCodeInterpreterCommand({
+              codeInterpreterIdentifier: this.codeInterpreterIdentifier,
+              sessionId: sandboxSessionId,
+              name: "executeCode",
+              arguments: {
+                code: buildBudgetConversionScript(city, category, price),
+                language: "python",
+                clearContext: false,
+              },
+            }),
+          );
+        } catch (error) {
+          // The cached session may itself be stale (expired server-side, or the
+          // request never reached it) — drop it so the next hold starts fresh
+          // instead of retrying against a session that will never work again.
+          this.sandboxSessionByRuntimeSession.delete(sessionId);
+          const budgetError = toSandboxUnavailable(error);
+          span.setAttribute("gen_ai.tool.call.result", JSON.stringify(budgetError));
+          return err(budgetError);
+        }
 
-    const result = await parseInvokeResponse(response);
-    if (!result.ok && result.error.type === "SandboxUnavailable") {
-      this.sandboxSessionByRuntimeSession.delete(sessionId);
-    }
-    return result;
+        const result = await parseInvokeResponse(response);
+        if (!result.ok && result.error.type === "SandboxUnavailable") {
+          this.sandboxSessionByRuntimeSession.delete(sessionId);
+        }
+        span.setAttribute("gen_ai.tool.call.result", JSON.stringify(result.ok ? result.value : result.error));
+        return result;
+      },
+    );
   }
 
   private ensureSandboxSession(sessionId: RuntimeSessionId): Promise<string> {

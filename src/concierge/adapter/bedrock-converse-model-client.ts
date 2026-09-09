@@ -17,6 +17,7 @@ import type { RuntimeSessionId } from "../domain/runtime-session-id";
 import { CALENDAR_TOOL_DEFINITIONS } from "../usecase/calendar-tool-catalog";
 import { KNOWLEDGE_BASE_TOOL_DEFINITIONS } from "../usecase/knowledge-base-tool-catalog";
 import type { ModelClient, ModelError, ToolCall, ToolExecutor } from "../usecase/ports";
+import { withSpan } from "../observability/tracing";
 
 const MAX_OUTPUT_TOKENS = 1024;
 
@@ -60,14 +61,36 @@ export class BedrockConverseModelClient implements ModelClient {
 
     try {
       for (let round = 0; round < MAX_TOOL_USE_ROUNDS; round += 1) {
-        const response = await this.client.send(
-          new ConverseCommand({
-            modelId: this.modelId,
-            messages,
-            system,
-            toolConfig: TOOL_CONFIG,
-            inferenceConfig: { maxTokens: MAX_OUTPUT_TOKENS },
-          }),
+        // Inference span (issue #24 / ADR-0008): one per model round, not
+        // per turn - a single Caller message can drive several rounds of
+        // tool calls (MAX_TOOL_USE_ROUNDS), and each is its own model call.
+        const response = await withSpan(
+          `chat ${this.modelId}`,
+          {
+            "gen_ai.operation.name": "chat",
+            "gen_ai.request.model": this.modelId,
+            "gen_ai.input.messages": JSON.stringify(messages),
+            "session.id": sessionId,
+          },
+          async (span) => {
+            const converseResponse = await this.client.send(
+              new ConverseCommand({
+                modelId: this.modelId,
+                messages,
+                system,
+                toolConfig: TOOL_CONFIG,
+                inferenceConfig: { maxTokens: MAX_OUTPUT_TOKENS },
+              }),
+            );
+            span.setAttribute("gen_ai.output.messages", JSON.stringify(converseResponse.output?.message ?? {}));
+            if (converseResponse.usage?.inputTokens !== undefined) {
+              span.setAttribute("gen_ai.usage.input_tokens", converseResponse.usage.inputTokens);
+            }
+            if (converseResponse.usage?.outputTokens !== undefined) {
+              span.setAttribute("gen_ai.usage.output_tokens", converseResponse.usage.outputTokens);
+            }
+            return converseResponse;
+          },
         );
 
         const toolCalls = extractToolCalls(response);

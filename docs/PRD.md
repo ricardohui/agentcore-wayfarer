@@ -366,6 +366,131 @@ automated test, same as REQ-GATEWAY-004.
 
 Source: issue #21, acceptance criterion 6; revised by ADR-0010.
 
+## REQ-EVAL-001 — Two AND'd custom evaluators judge itinerary quality
+
+A TOOL_CALL-level deterministic evaluator (`wayfarer_budget_gate`) reads Code Interpreter's
+Running total and compares it against the fixed scenario budget (`WAYFARER_SCENARIO_BUDGET_USD`),
+AND'd with a SESSION-level LLM-as-a-judge evaluator (`wayfarer_itinerary_quality`) judging
+relevant (holds match the Caller's stated destinations/dates/constraints) and complete (all
+requested cities end the session with both a flight hold and a hotel hold). A session passes
+only if both evaluators return `PASS`/`Pass` — that AND is read from the two separate `Evaluate`
+results, not enforced by either evaluator alone.
+
+Source: issue #23, "What to build"; ADR-0007.
+
+## REQ-EVAL-002 — The deterministic gate's scoring logic is exhaustively unit tested
+
+`evaluateBudgetGate`/`extractRunningTotals` (`src/evaluations/budget-gate-evaluator/handler.ts`)
+are tested directly, independent of the Lambda's AgentCore event wrapper: finding a Running total
+nested as a parsed object or as a serialized JSON string attribute, judging the session's final
+(highest) Running total rather than the first one seen, narrowing to `evaluationTarget.spanIds`
+when AgentCore supplies one (falling back to every span when none match), and the `NO_BUDGET_DATA`
+error path when no span carries Code Interpreter output at all.
+
+Source: issue #23, "write ordinary tests for any deterministic-gate parsing/scoring logic".
+Covered by `tests/evaluations/budget-gate-evaluator/handler.spec.ts`.
+
+## REQ-EVAL-003 — Both evaluators are fully CDK-provisioned
+
+The budget-gate Lambda, the TOOL_CALL code-based evaluator, and the SESSION LLM-as-a-judge
+evaluator are all provisioned via `aws-cdk-lib`'s `aws-bedrockagentcore` L2 `Evaluator`/
+`EvaluatorConfig` constructs — no console or bare-CLI `create-evaluator` call. Verified by `cdk
+synth` succeeding, not an automated test, same as REQ-KB-005.
+
+Source: issue #23, "Register both evaluators via create-evaluator... follow this repo's existing
+CDK-first convention".
+
+## REQ-EVAL-004 — The evaluation dataset is 3 live-generated transcripts, not hand-authored fixtures
+
+Happy-path, over-budget, and incomplete transcripts are each produced by invoking the real,
+deployed Concierge Runtime through its Cognito-authenticated `/invocations` entry point with a
+steered multi-turn conversation, exercising the full composed stack (Gateway, Memory, Identity,
+Code Interpreter, Browser Tool, Policy, Knowledge Base) exactly as a live Caller would — not
+hand-typed OTEL span JSON.
+
+Source: issue #23, acceptance criterion 2; ADR-0007.
+
+## REQ-EVAL-005 — On-demand evaluation against the 3 transcripts matches the expected pass/fail per transcript
+
+Triggering the on-demand `Evaluate` API for both evaluators against each transcript's session
+spans, read back from CloudWatch, shows: happy-path passes both gates; over-budget fails only the
+deterministic gate; incomplete fails only the LLM-judge gate. Verified manually by reading
+CloudWatch evaluation results, per the spec's testing decisions for Evaluations — not an
+automated test.
+
+**Fully verified** (ADR-0007's Revision 3): both gates confirmed against real `Evaluate` calls on
+the final 3-transcript dataset, matching every expectation exactly —
+
+| Transcript | Budget gate | Judge |
+|---|---|---|
+| happy | PASS ($3,594.10 ≤ $3,600) | Pass — relevant + complete |
+| over-budget | FAIL ($4,061.83 > $3,600) | Pass — relevant + complete |
+| incomplete | PASS (not this transcript's tested criterion) | Fail — incomplete (only Tokyo held) |
+
+Getting the judge working against the real (multi-turn) dataset needed two more fixes past
+ADR-0007's Revision 2: a split-telemetry event-record pipeline (this account's Runtime delivers
+telemetry in "split" mode, needing a second, correlated CloudWatch Logs record per
+content-bearing span — REQ-OBS-003 below), and `handler.ts` setting `gen_ai.task.output`
+unconditionally rather than only on the successful-reply path (a fallback-message turn's span
+was missing that event record's `output` field entirely, failing the whole session's evaluation,
+not just that one span).
+
+Source: issue #23, acceptance criteria 3-6.
+
+## REQ-OBS-001 — Every live-Concierge primitive emits its own span, correctly nested under one session span
+
+One live end-to-end session produces one trace with a `session.id`-tagged `InvokeAgent` root span
+and, under it, the correct parent/child nesting for every request it makes: Runtime's own session
+span, Identity's inbound-auth check, Memory's `get_last_k_turns`/`create_event`/
+`RetrieveMemoryRecords` (both Strategies), one `chat <model>` span per model round, one
+`execute_tool <name>` span per Gateway booking action (folding Policy's ALLOW/DENY into that same
+span — Policy has no AWS call of its own to give it a separate span), Code Interpreter's
+`executeCode`, and Browser Tool's `price-check`. Harness (issue #22, standalone) never appears.
+
+Source: issue #24, acceptance criteria 1-2, 5; ADR-0008.
+
+## REQ-OBS-002 — Identity/Code Interpreter/Memory redaction is asymmetric, matching ADR-0008
+
+Only Identity's consent-flow spans redact token/secret values (`redactTokenValue()`, keeping flow
+state like `pending`/`approved` visible) — Code Interpreter's budget figures and Memory's
+preference facts stay unredacted everywhere else, since neither is a credential and both are the
+substance a reviewer needs to judge a session's quality.
+
+Source: issue #24, acceptance criteria 3-4; ADR-0008.
+
+## REQ-OBS-003 — Tracing infrastructure is hand-rolled, not the ADOT auto-instrumentation agent
+
+Because the Concierge's deployed bundle is ESM and the AWS Node ADOT distro's only public entry
+point relies on `require()`-patching (silently inert under ESM), spans are emitted by a manual
+OpenTelemetry pipeline (`src/concierge/observability/tracing.ts`): `BasicTracerProvider` +
+`AWSXRayIdGenerator` + `AsyncHooksContextManager`, exporting via a custom, SigV4-signed
+`SpanExporter` POSTing OTLP-protobuf-serialized batches directly to
+`https://xray.<region>.amazonaws.com/v1/traces`. The Runtime's execution role holds
+`xray:PutTraceSegments`/`PutSpans`/`PutSpansForIndexing`/`PutTelemetryRecords` (`Resource: "*"`,
+matching the `AWSXRayDaemonWriteAccess` managed policy's own scoping). Verified by real spans
+appearing in the `aws/spans` CloudWatch Logs group with correct trace/span/parent IDs and
+`gen_ai.*` attributes — not by an automated test, per the spec's testing decisions for
+Observability.
+
+Source: ADR-0008's Revision (issue #24, issue #23's discovery that ADR-0007's "no blocking edge to
+Observability" premise was false).
+
+## REQ-OBS-004 — A second, split-telemetry event-record pipeline delivers span content to CloudWatch Logs
+
+This account's Runtime delivers telemetry in AgentCore's "split" mode (confirmed live: setting
+`UNIFIED_TRACES_DESTINATION_ENABLED=true` had no effect, since the platform only honors it for a
+sender it recognizes as a real ADOT SDK build). Split mode needs each content-bearing span's
+payload delivered a second time, as a separate CloudWatch Logs record correlated by `traceId`/
+`spanId`, to the Runtime's own log group's `otel-rt-logs` stream — without it, AgentCore
+Evaluations' LLM judge fails the whole session with `LogEventMissingException`.
+`emitEventRecord()` (`tracing.ts`) writes this via `PutLogEventsCommand`, discovering the log
+group at runtime by name (`CONCIERGE_RUNTIME_NAME`) rather than by the Runtime's generated
+`agentRuntimeId`, which isn't knowable at CDK synth time without a circular CloudFormation
+dependency. New IAM: `logs:DescribeLogGroups`, `logs:CreateLogStream`, `logs:PutLogEvents`.
+Delivery is best-effort and silent on failure, matching the Traces exporter's own treatment.
+
+Source: ADR-0007's Revision 3 / ADR-0008's Revision (issue #23).
+
 ## Changelog
 
 - 2026-08-28 — Added REQ-RUNTIME-001, REQ-RUNTIME-002, REQ-RUNTIME-003 for the Runtime
@@ -446,3 +571,46 @@ Source: issue #21, acceptance criterion 6; revised by ADR-0010.
   Cedar policy (`wayfarer_destination_guides_unrestricted`), and the Gateway-role grant it added are
   all removed — REQ-KB-003's ungated requirement is now met by having no mediating layer at all,
   not by an unconditional Cedar permit. REQ-KB-001 and REQ-KB-002 are unaffected.
+- 2026-09-08 — Added REQ-EVAL-001 through REQ-EVAL-005 for Evaluations' itinerary-quality gates
+  (issue #23 / ADR-0007). `aws-cdk-lib`'s `aws-bedrockagentcore` module ships a full L2
+  `Evaluator`/`EvaluatorConfig` construct pair (not just the L1 `CfnEvaluator` already used for
+  Policy) — both the TOOL_CALL code-based evaluator and the SESSION LLM-as-a-judge evaluator are
+  CDK-provisioned with no CLI fallback needed, unlike ADR-0007's original "fall back to
+  CLI/SDK" contingency. `EvaluatorConfig.codeBased()` auto-grants the evaluation service invoke
+  permission on the Lambda scoped to that evaluator's own ARN, so no manual IAM wiring was needed
+  the way `BookingGatewayConstruct`'s Gateway-to-router-Lambda grant was.
+- 2026-09-09 — Added REQ-OBS-001 through REQ-OBS-003 for full-session tracing across every
+  live-Concierge primitive (issue #24 / ADR-0008, revised). Picked up out of build order, ahead of
+  its own place in the spec's "Observability... last" sequencing, because implementing #23 (issue
+  #23 / ADR-0007) discovered live that Evaluations' on-demand `Evaluate` step genuinely depends on
+  real OTEL spans existing — reversing ADR-0007's original "no blocking edge to Observability"
+  claim. `BookingGatewayAdapter`, `AgentCoreMemoryAdapter`, `CodeInterpreterBudgetAdapter`,
+  `BrowserToolPriceCheckAdapter`, `DelegatedCalendarAdapter`, and `BedrockKnowledgeBaseAdapter`
+  each gained a `withSpan()` wrapper around their one real AWS call;
+  `BookingGatewayPort.searchFlights`/`searchHotels`/`holdFlight`/`holdHotel`/`approveHold`'s
+  previously-unused `_sessionId` parameters are now used (for the span attribute only — still
+  never forwarded to Gateway itself, per issue #20's header finding).
+- 2026-09-09 — Revised REQ-EVAL-005 (issue #23 / ADR-0007's Revision 2). With #24's spans
+  landing in CloudWatch, the real on-demand `Evaluate` run surfaced two more AgentCore-internal
+  requirements specific to the SESSION LLM-as-a-judge evaluator: spans must carry a
+  `scope.name` from a fixed allow-list of known agent frameworks (fixed by labeling the tracer
+  `opentelemetry.instrumentation.langchain` — a compatibility label, not a framework claim,
+  since our span shape already matches what that scope emits), and every span needs a
+  `traceloop.span.kind` attribute (`llm`/`tool`/`workflow`) the judge uses to find "model/tool/
+  agent invocation details." Both fixed and confirmed live. The deterministic gate is now fully
+  verified against the real 3-transcript dataset (exact PASS/FAIL matches); the LLM judge works
+  in isolation but not yet against the multi-turn dataset (`LogEventMissingException` — needs a
+  second, Logs-signal OTEL pipeline alongside the Traces one this ADR built), left as a follow-up.
+- 2026-09-09 — Added REQ-OBS-004 and fully resolved REQ-EVAL-005 (issue #23 / ADR-0007's
+  Revision 3, ADR-0008's Revision). Two more fixes closed the gap the previous entry left open:
+  (1) `UNIFIED_TRACES_DESTINATION_ENABLED=true` was tried first and didn't work — the platform
+  only honors it for a real ADOT SDK sender, which a hand-rolled tracer isn't — so a genuine
+  split-telemetry event-record pipeline shipped instead (`emitEventRecord()`, `tracing.ts`,
+  writing to the Runtime's own log group's `otel-rt-logs` stream, discovered at runtime by name
+  to avoid a circular CDK dependency on the Runtime's own generated ID); (2) `handler.ts`'s
+  `gen_ai.task.output` attribute was only set on the successful-reply path — the three fallback-
+  message early returns skipped it, and every real transcript has at least one such turn (a
+  `ModelError` from exceeding `MAX_TOOL_USE_ROUNDS`, always retried), so `handler.ts` was
+  restructured to set it unconditionally from a single exit point. With both fixed, the final
+  3-transcript dataset (regenerated once more so every span postdates both fixes) matches all 6
+  of issue #23's acceptance criteria exactly — both gates, all three transcripts.

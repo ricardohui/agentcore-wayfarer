@@ -15,6 +15,7 @@ import type { MemoryError } from "../domain/memory-error";
 import { err, ok, type Result } from "../domain/result";
 import type { RuntimeSessionId } from "../domain/runtime-session-id";
 import { semanticPreferenceNamespace, userPreferenceNamespace } from "../memory-namespaces";
+import { withSpan } from "../observability/tracing";
 import type { MemoryPort } from "../usecase/ports";
 
 // Speaks directly to AgentCore Memory's data plane (issue #16). CreateEvent
@@ -34,23 +35,29 @@ export class AgentCoreMemoryAdapter implements MemoryPort {
     actorId: ActorId,
     turn: ConversationTurn,
   ): Promise<Result<void, MemoryError>> {
-    try {
-      await this.client.send(
-        new CreateEventCommand({
-          memoryId: this.memoryId,
-          actorId,
-          sessionId,
-          eventTimestamp: new Date(),
-          payload: [
-            { conversational: { role: "USER", content: { text: turn.message } } },
-            { conversational: { role: "ASSISTANT", content: { text: turn.reply } } },
-          ],
-        }),
-      );
-      return ok(undefined);
-    } catch (error) {
-      return err(toMemoryError(error));
-    }
+    return withSpan(
+      "create_event",
+      { "gen_ai.operation.name": "create_event", "session.id": sessionId, "actor.id": actorId },
+      async () => {
+        try {
+          await this.client.send(
+            new CreateEventCommand({
+              memoryId: this.memoryId,
+              actorId,
+              sessionId,
+              eventTimestamp: new Date(),
+              payload: [
+                { conversational: { role: "USER", content: { text: turn.message } } },
+                { conversational: { role: "ASSISTANT", content: { text: turn.reply } } },
+              ],
+            }),
+          );
+          return ok(undefined);
+        } catch (error) {
+          return err(toMemoryError(error));
+        }
+      },
+    );
   }
 
   async getRecentTurns(
@@ -58,32 +65,52 @@ export class AgentCoreMemoryAdapter implements MemoryPort {
     actorId: ActorId,
     limit: number,
   ): Promise<Result<readonly ConversationTurn[], MemoryError>> {
-    try {
-      const response = await this.client.send(
-        new ListEventsCommand({
-          memoryId: this.memoryId,
-          actorId,
-          sessionId,
-          includePayloads: true,
-          maxResults: limit,
-        }),
-      );
-      return ok(parseTurns(response.events ?? []));
-    } catch (error) {
-      return err(toMemoryError(error));
-    }
+    return withSpan(
+      "get_last_k_turns",
+      { "gen_ai.operation.name": "get_last_k_turns", "session.id": sessionId, "actor.id": actorId },
+      async (span) => {
+        try {
+          const response = await this.client.send(
+            new ListEventsCommand({
+              memoryId: this.memoryId,
+              actorId,
+              sessionId,
+              includePayloads: true,
+              maxResults: limit,
+            }),
+          );
+          const turns = parseTurns(response.events ?? []);
+          span.setAttribute("memory.turns_returned", turns.length);
+          return ok(turns);
+        } catch (error) {
+          return err(toMemoryError(error));
+        }
+      },
+    );
   }
 
   async getPreferences(actorId: ActorId): Promise<Result<readonly CallerPreference[], MemoryError>> {
-    try {
-      const [userPreference, semantic] = await Promise.all([
-        this.retrieveNamespace(userPreferenceNamespace(actorId)),
-        this.retrieveNamespace(semanticPreferenceNamespace(actorId)),
-      ]);
-      return ok([...userPreference, ...semantic]);
-    } catch (error) {
-      return err(toMemoryError(error));
-    }
+    return withSpan(
+      "RetrieveMemoryRecords",
+      {
+        "gen_ai.operation.name": "retrieve_memory_records",
+        "actor.id": actorId,
+        "memory.strategies": "user-preference,semantic",
+      },
+      async (span) => {
+        try {
+          const [userPreference, semantic] = await Promise.all([
+            this.retrieveNamespace(userPreferenceNamespace(actorId)),
+            this.retrieveNamespace(semanticPreferenceNamespace(actorId)),
+          ]);
+          span.setAttribute("memory.user_preference_count", userPreference.length);
+          span.setAttribute("memory.semantic_count", semantic.length);
+          return ok([...userPreference, ...semantic]);
+        } catch (error) {
+          return err(toMemoryError(error));
+        }
+      },
+    );
   }
 
   private async retrieveNamespace(namespace: string): Promise<readonly CallerPreference[]> {

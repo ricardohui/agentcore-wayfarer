@@ -6,6 +6,7 @@ import {
 import { DestinationGuideExcerpt } from "../domain/destination-guide-excerpt";
 import type { KnowledgeBaseError } from "../domain/knowledge-base-error";
 import { err, ok, type Result } from "../domain/result";
+import { withSpan } from "../observability/tracing";
 import type { KnowledgeBasePort } from "../usecase/ports";
 
 // Speaks directly to Bedrock Agent Runtime's Retrieve API (issue #21 /
@@ -19,17 +20,30 @@ export class BedrockKnowledgeBaseAdapter implements KnowledgeBasePort {
   ) {}
 
   async retrieve(query: string): Promise<Result<readonly DestinationGuideExcerpt[], KnowledgeBaseError>> {
-    try {
-      const response = await this.client.send(
-        new RetrieveCommand({
-          knowledgeBaseId: this.knowledgeBaseId,
-          retrievalQuery: { text: query },
-        }),
-      );
-      return parseRetrievalResults(response.retrievalResults);
-    } catch (error) {
-      return err(toKnowledgeBaseError(error));
-    }
+    // A direct Bedrock call span outside the seven live-Concierge-primitive
+    // set (ADR-0010's second amendment to ADR-0008's traced-span list) —
+    // Knowledge Base retrieval is no longer a Gateway action.
+    return withSpan(
+      "Retrieve",
+      { "gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": "retrieve-destination-guide", "gen_ai.tool.call.arguments": JSON.stringify({ query }) },
+      async (span) => {
+        try {
+          const response = await this.client.send(
+            new RetrieveCommand({
+              knowledgeBaseId: this.knowledgeBaseId,
+              retrievalQuery: { text: query },
+            }),
+          );
+          const result = parseRetrievalResults(response.retrievalResults);
+          span.setAttribute("gen_ai.tool.call.result", JSON.stringify(result.ok ? result.value : result.error));
+          return result;
+        } catch (error) {
+          const knowledgeBaseError = toKnowledgeBaseError(error);
+          span.setAttribute("gen_ai.tool.call.result", JSON.stringify(knowledgeBaseError));
+          return err(knowledgeBaseError);
+        }
+      },
+    );
   }
 }
 
