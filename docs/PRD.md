@@ -339,18 +339,19 @@ Source: issue #21, acceptance criterion 2.
 
 ## REQ-KB-003 — Destination-guide retrieval is read-only and ungated
 
-No Policy rule gates or otherwise constrains the destination-guide retrieve tool — same
-unconditional-permit treatment as `search-flights`/`search-hotels` (ADR-0006's Policy engine
-denies by default once attached, so an explicit unconditional Cedar policy is what keeps it
-callable).
+Destination-guide retrieval is a direct in-process `bedrock-agent-runtime` call — no Gateway
+target, no Policy rule gating or otherwise constraining it. This is a stronger form of the
+original "same unconditional-permit treatment as `search-flights`/`search-hotels`" requirement:
+rather than an explicit unconditional Cedar policy undoing the Policy engine's default-deny, the
+call never passes through the Policy engine at all.
 
-Source: issue #21, acceptance criterion 4.
+Source: issue #21, acceptance criterion 4; revised by ADR-0010.
 
 ## REQ-KB-004 — The destination-guide retrieval flow is driven through the real Runtime entry point
 
 An acceptance test asks a destination question through the real `/invocations` entry point,
-network boundary mocked (Gateway's Knowledge Base connector target), and asserts the reply is
-traceable to retrieved Knowledge Base content, not a model-invented answer.
+network boundary mocked at the direct `bedrock-agent-runtime` Retrieve call, and asserts the
+reply is traceable to retrieved Knowledge Base content, not a model-invented answer.
 
 Source: issue #21, acceptance criterion 5 (`tests/concierge/acceptance/destination-guide-retrieval.spec.ts`).
 
@@ -358,12 +359,12 @@ Source: issue #21, acceptance criterion 5 (`tests/concierge/acceptance/destinati
 
 A Bedrock **Managed** Knowledge Base (`type: MANAGED`, service-managed embedding model — no
 vector store to provision), its S3 content bucket (3 authored per-city docs deployed via
-`BucketDeployment`), its S3 data source, and a second Gateway target on the existing booking
-Gateway (AgentCore's native `bedrock-knowledge-bases` connector, `Retrieve` tool only) are all
-provisioned by CDK — no console or bare-CLI provisioning. Verified by `cdk synth` succeeding, not
-an automated test, same as REQ-GATEWAY-004.
+`BucketDeployment`), and its S3 data source are provisioned by CDK — no console or bare-CLI
+provisioning. The Runtime's own execution role holds `bedrock:Retrieve` on the Knowledge Base's
+ARN directly; there is no Gateway target for it. Verified by `cdk synth` succeeding, not an
+automated test, same as REQ-GATEWAY-004.
 
-Source: issue #21, acceptance criterion 6.
+Source: issue #21, acceptance criterion 6; revised by ADR-0010.
 
 ## Changelog
 
@@ -438,3 +439,10 @@ Source: issue #21, acceptance criterion 6.
   action, mirroring `wayfarer_search_unrestricted` from issue #20 — without it, ENFORCE mode
   would silently deny this new action too, the same reasoning that already applies to
   search-flights/search-hotels.
+- 2026-09-08 — Revised REQ-KB-003, REQ-KB-004, and REQ-KB-005 (issue #21 / ADR-0010).
+  Destination-guide retrieval no longer goes through a Gateway target: `BedrockKnowledgeBaseAdapter`
+  calls `bedrock-agent-runtime`'s `Retrieve` API directly, and the Runtime's own execution role
+  holds `bedrock:Retrieve` on the Knowledge Base's ARN. `KnowledgeBaseGatewayTargetConstruct`, its
+  Cedar policy (`wayfarer_destination_guides_unrestricted`), and the Gateway-role grant it added are
+  all removed — REQ-KB-003's ungated requirement is now met by having no mediating layer at all,
+  not by an unconditional Cedar permit. REQ-KB-001 and REQ-KB-002 are unaffected.

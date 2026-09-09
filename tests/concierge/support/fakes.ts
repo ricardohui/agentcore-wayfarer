@@ -11,6 +11,7 @@ import type { FlightCandidate, FlightCandidateId } from "../../../src/concierge/
 import type { GatewayError } from "../../../src/concierge/domain/gateway-error";
 import type { Hold } from "../../../src/concierge/domain/hold";
 import type { HotelCandidate, HotelCandidateId } from "../../../src/concierge/domain/hotel-candidate";
+import type { KnowledgeBaseError } from "../../../src/concierge/domain/knowledge-base-error";
 import type { LocalPrice } from "../../../src/concierge/domain/local-price";
 import type { MemoryError } from "../../../src/concierge/domain/memory-error";
 import type { PriceCheckError } from "../../../src/concierge/domain/price-check-error";
@@ -251,13 +252,13 @@ export class FakeBudgetPort implements BudgetPort {
 
 export class FakeKnowledgeBasePort implements KnowledgeBasePort {
   public receivedQueries: string[] = [];
-  private nextResult: Result<readonly DestinationGuideExcerpt[], GatewayError> | undefined;
+  private nextResult: Result<readonly DestinationGuideExcerpt[], KnowledgeBaseError> | undefined;
 
-  respondToRetrieveWith(result: Result<readonly DestinationGuideExcerpt[], GatewayError>): void {
+  respondToRetrieveWith(result: Result<readonly DestinationGuideExcerpt[], KnowledgeBaseError>): void {
     this.nextResult = result;
   }
 
-  async retrieve(query: string): Promise<Result<readonly DestinationGuideExcerpt[], GatewayError>> {
+  async retrieve(query: string): Promise<Result<readonly DestinationGuideExcerpt[], KnowledgeBaseError>> {
     this.receivedQueries.push(query);
     if (!this.nextResult) {
       throw new Error("FakeKnowledgeBasePort.retrieve called before respondToRetrieveWith");

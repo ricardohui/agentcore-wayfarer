@@ -3,6 +3,7 @@ import {
   ListEventsCommand,
   RetrieveMemoryRecordsCommand,
 } from "@aws-sdk/client-bedrock-agentcore";
+import { RetrieveCommand } from "@aws-sdk/client-bedrock-agent-runtime";
 import { ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
 import type { DocumentType } from "@smithy/types";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -10,7 +11,7 @@ import { app } from "../../../src/concierge/infra/handler";
 import { bedrockMock } from "../support/bedrock-network-boundary";
 import { CognitoMockServer } from "../support/cognito-network-boundary";
 import { aSessionId, closeConciergeApp, invoke, waitForHealthy } from "../support/concierge-test-server";
-import { GatewayMockServer } from "../support/gateway-network-boundary";
+import { knowledgeBaseMock } from "../support/knowledge-base-network-boundary";
 import { memoryMock } from "../support/memory-network-boundary";
 import { NetworkBoundary } from "../support/network-boundary";
 
@@ -18,13 +19,12 @@ const PORT = 41830;
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 
 // Knowledge Base's destination-guide retrieval (REQ-KB-001, REQ-KB-002,
-// REQ-KB-003, issue #21 / ADR-0009): a destination question is answered
+// REQ-KB-003, issue #21 / ADR-0010): a destination question is answered
 // using retrieved Knowledge Base content, not the model's unaided knowledge
 // — driven through the real Runtime entry point, network boundary mocked at
-// Gateway's Knowledge Base connector target.
-describe("Destination-guide retrieval via Gateway (REQ-KB-001, REQ-KB-002, REQ-KB-003)", () => {
+// the direct bedrock-agent-runtime Retrieve call.
+describe("Destination-guide retrieval (REQ-KB-001, REQ-KB-002, REQ-KB-003)", () => {
   let network: NetworkBoundary;
-  let gateway: GatewayMockServer;
   let cognito: CognitoMockServer;
 
   beforeAll(async () => {
@@ -42,8 +42,8 @@ describe("Destination-guide retrieval via Gateway (REQ-KB-001, REQ-KB-002, REQ-K
     memoryMock.on(CreateEventCommand).resolves({});
     memoryMock.on(ListEventsCommand).resolves({ events: [] });
     memoryMock.on(RetrieveMemoryRecordsCommand).resolves({ memoryRecordSummaries: [] });
+    knowledgeBaseMock.reset();
     network = new NetworkBoundary();
-    gateway = new GatewayMockServer(network.agent);
     cognito = await CognitoMockServer.register(network.agent);
   });
 
@@ -52,19 +52,17 @@ describe("Destination-guide retrieval via Gateway (REQ-KB-001, REQ-KB-002, REQ-K
   });
 
   it("answers a destination question using content retrieved from the Knowledge Base", async () => {
-    gateway.respondToTool("Retrieve", {
-      content: {
-        retrievalResults: [
-          {
-            content: {
-              type: "TEXT",
-              text: "Travelers from the US, UK, EU, Canada, and Australia can enter Japan visa-free for stays of up to 90 days.",
-            },
-            location: { type: "S3", s3Location: { uri: "s3://wayfarer-destination-guides/tokyo.md" } },
-            score: 0.91,
+    knowledgeBaseMock.on(RetrieveCommand).resolves({
+      retrievalResults: [
+        {
+          content: {
+            type: "TEXT",
+            text: "Travelers from the US, UK, EU, Canada, and Australia can enter Japan visa-free for stays of up to 90 days.",
           },
-        ],
-      },
+          location: { type: "S3", s3Location: { uri: "s3://wayfarer-destination-guides/tokyo.md" } },
+          score: 0.91,
+        },
+      ],
     });
 
     bedrockMock
@@ -93,9 +91,9 @@ describe("Destination-guide retrieval via Gateway (REQ-KB-001, REQ-KB-002, REQ-K
     expect(await response.text()).toBe(
       "Travelers from the US, UK, EU, Canada, and Australia can enter Japan visa-free for stays of up to 90 days.",
     );
-    expect(gateway.receivedToolCalls).toMatchObject([
-      { name: "Retrieve", arguments: { retrievalQuery: { text: "visa situation for Tokyo" } } },
-    ]);
+    const calls = knowledgeBaseMock.commandCalls(RetrieveCommand);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.args[0].input).toMatchObject({ retrievalQuery: { text: "visa situation for Tokyo" } });
   });
 });
 

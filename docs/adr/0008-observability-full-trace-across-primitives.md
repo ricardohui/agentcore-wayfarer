@@ -11,12 +11,13 @@ story and wouldn't demonstrate that AgentCore's tracing is genuinely
 cross-cutting.
 
 Every one of those seven primitives gets its own span: Runtime (session),
-Gateway (search-flights/hold-flight/search-hotels/hold-hotel/approve-hold,
-plus the Knowledge Base retrieve action added by ADR-0009), Memory
-(get_last_k_turns, create_event, the two Memory Strategies), Identity
+Gateway (search-flights/hold-flight/search-hotels/hold-hotel/approve-hold),
+Memory (get_last_k_turns, create_event, the two Memory Strategies), Identity
 (Cognito inbound auth + OAuth2 consent handshake), Code Interpreter
 (executeCode running-total updates), Browser Tool (price-check), Policy
-(Cedar approval gate). This span set is a superset of what Evaluations
+(Cedar approval gate). Knowledge Base retrieval (ADR-0010) is a direct
+in-process `bedrock-agent-runtime` call, not a Gateway action, and gets its
+own span outside this seven-primitive set. This span set is a superset of what Evaluations
 (ADR from issue #10) already requires from OTEL — input, output, tool calls,
 latency per step — so Observability's scope also satisfies Evaluations
 rather than being designed independently of it.

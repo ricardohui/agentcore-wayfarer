@@ -12,6 +12,9 @@ export default defineConfig({
       // Composition-root default for the Memory adapter (issue #16) — like
       // GATEWAY_URL above, only exercised where a test mocks its network boundary.
       MEMORY_ID: "test-memory-id",
+      // Composition-root default for the Knowledge Base adapter (issue #21) — like
+      // MEMORY_ID above, only exercised where a test mocks its network boundary.
+      KNOWLEDGE_BASE_ID: "test-knowledge-base-id",
       // SigV4 signing needs *some* resolvable credentials to compute a
       // signature — these never reach a real AWS endpoint in tests.
       AWS_ACCESS_KEY_ID: "test-access-key-id",

@@ -8,13 +8,11 @@ import type { Construct } from "constructs";
 
 const CONTENT_SOURCE_DIR = path.join(__dirname, "../../../src/destination-guides/content");
 
-// Knowledge Base's destination-guide content (issue #21 / ADR-0009): a
+// Knowledge Base's destination-guide content (issue #21 / ADR-0010): a
 // Bedrock **Managed** Knowledge Base (`type: MANAGED`) — fully managed by
 // Bedrock, no vector store/embedding model to provision or configure — with
-// one S3 data source over the 3 authored per-city docs. This construct owns
-// only the KB + its content bucket; the Gateway target that exposes it as an
-// MCP tool lives in KnowledgeBaseGatewayTargetConstruct, since that needs the
-// booking Gateway's already-provisioned gateway/gatewayRole/policyEngine.
+// one S3 data source over the 3 authored per-city docs. Queried directly by
+// the Runtime's own bedrock-agent-runtime Retrieve call — no Gateway target.
 export class KnowledgeBaseConstruct extends cdk.Resource {
   public readonly bucket: s3.Bucket;
   public readonly knowledgeBase: bedrock.CfnKnowledgeBase;

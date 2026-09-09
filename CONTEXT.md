@@ -29,7 +29,7 @@ no real discovery/cataloging need in a single-user learning scenario, and Paymen
 isn't a priority for this learning pass.
 
 Not every AWS capability Wayfarer touches is a Primitive in this sense — see Knowledge
-Base, a Bedrock capability wired to the Gateway primitive rather than counted as an
+Base, a Bedrock capability the Concierge calls directly rather than counted as an
 11th primitive of its own.
 
 ## Knowledge Base
@@ -37,12 +37,11 @@ Base, a Bedrock capability wired to the Gateway primitive rather than counted as
 Wayfarer's RAG capability: a Bedrock **Managed** Knowledge Base (fully managed by
 Bedrock — no vector-store infra to provision) holding destination-guide content
 (visa/entry requirements, climate, customs, packing advice) for the 3 scenario cities,
-exposed to the Concierge as a Gateway tool via Gateway's native `bedrock-knowledge-bases`
-connector target — a second, distinct Gateway target alongside ADR-0001's booking
-OpenAPI/Lambda target. Content is authored (not crawled or real-sourced) and ingested
-via Gateway's S3 connector, same mock-the-outside-world spirit as ADR-0001/0004/0005.
-Read-only and ungated — no Policy consequence, same treatment as search-flights/
-search-hotels.
+queried by the Concierge via a direct in-process `bedrock-agent-runtime` Retrieve call
+(ADR-0010) — no Gateway hop. Content is authored (not crawled or real-sourced) and
+ingested via the Knowledge Base's own S3 data source, same mock-the-outside-world
+spirit as ADR-0001/0004/0005. Read-only and ungated — no Policy consequence, same
+treatment as search-flights/search-hotels.
 _Avoid_: calling this a 12th "Primitive" — see Primitive, above. Also avoid "RAG" bare
 as a glossary term — always say Knowledge Base, the concrete AWS resource.
 

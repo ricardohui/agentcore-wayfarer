@@ -28,9 +28,9 @@ describe("KnowledgeBaseToolExecutor", () => {
     });
   });
 
-  it("surfaces a GatewayError from the port as a tool error result", async () => {
+  it("surfaces a KnowledgeBaseError from the port as a tool error result", async () => {
     const port = new FakeKnowledgeBasePort();
-    port.respondToRetrieveWith(err({ type: "GatewayUnavailable", message: "Gateway timed out" }));
+    port.respondToRetrieveWith(err({ type: "KnowledgeBaseUnavailable", message: "Knowledge Base timed out" }));
     const executor = new KnowledgeBaseToolExecutor(port);
 
     const result = await executor.execute(
@@ -38,7 +38,7 @@ describe("KnowledgeBaseToolExecutor", () => {
       aRuntimeSessionId(),
     );
 
-    expect(result).toEqual({ toolUseId: "call-2", isError: true, content: { error: "Gateway timed out" } });
+    expect(result).toEqual({ toolUseId: "call-2", isError: true, content: { error: "Knowledge Base timed out" } });
   });
 
   it("rejects an unknown tool name without calling the port", async () => {

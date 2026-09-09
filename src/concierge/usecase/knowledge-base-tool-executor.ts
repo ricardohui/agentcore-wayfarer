@@ -15,9 +15,9 @@ function serializeExcerpt(excerpt: DestinationGuideExcerpt) {
 }
 
 // Dispatches the model's retrieve-destination-guide tool-use call to the
-// Knowledge Base's Gateway target (issue #21 / ADR-0009). Unlike
-// BookingToolExecutor, there's no candidate cache, price-check, or Policy
-// consequence to bridge — read-only, ungated, one call in, one call out.
+// Knowledge Base (issue #21 / ADR-0010). Unlike BookingToolExecutor, there's
+// no candidate cache, price-check, or Policy consequence to bridge —
+// read-only, ungated, one call in, one call out.
 export class KnowledgeBaseToolExecutor implements ToolExecutor {
   constructor(private readonly knowledgeBase: KnowledgeBasePort) {}
 

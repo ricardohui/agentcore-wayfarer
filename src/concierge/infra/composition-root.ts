@@ -1,7 +1,9 @@
 import { BedrockAgentCoreClient } from "@aws-sdk/client-bedrock-agentcore";
+import { BedrockAgentRuntimeClient } from "@aws-sdk/client-bedrock-agent-runtime";
 import { BedrockRuntimeClient } from "@aws-sdk/client-bedrock-runtime";
 import { AgentCoreMemoryAdapter } from "../adapter/agentcore-memory-adapter";
 import { BedrockConverseModelClient } from "../adapter/bedrock-converse-model-client";
+import { BedrockKnowledgeBaseAdapter } from "../adapter/bedrock-knowledge-base-adapter";
 import { BrowserToolPriceCheckAdapter } from "../adapter/browser-tool-price-check-adapter";
 import { CodeInterpreterBudgetAdapter } from "../adapter/code-interpreter-budget-adapter";
 import { CognitoJwtVerifier } from "../adapter/cognito-jwt-verifier";
@@ -9,7 +11,6 @@ import { BookingGatewayAdapter } from "../adapter/booking-gateway-adapter";
 import { createDecimalPriceFetch } from "../adapter/decimal-price-fetch";
 import { DelegatedCalendarAdapter } from "../adapter/delegated-calendar-adapter";
 import { InMemorySessionLock } from "../adapter/in-memory-session-lock";
-import { KnowledgeBaseGatewayAdapter } from "../adapter/knowledge-base-gateway-adapter";
 import { createSigV4Fetch } from "../adapter/sigv4-fetch";
 import { BOOKING_TOOL_NAMES, BookingToolExecutor } from "../usecase/booking-tool-executor";
 import { CALENDAR_TOOL_NAMES, CalendarToolExecutor } from "../usecase/calendar-tool-executor";
@@ -32,6 +33,7 @@ export function buildConciergePorts(): RespondToCallerMessagePorts {
   const codeInterpreterId = requireEnv("CODE_INTERPRETER_ID");
   const browserId = requireEnv("BROWSER_ID");
   const priceCheckSiteUrl = requireEnv("PRICE_CHECK_SITE_URL");
+  const knowledgeBaseId = requireEnv("KNOWLEDGE_BASE_ID");
 
   const bookingGateway = new BookingGatewayAdapter(
     gatewayUrl,
@@ -41,7 +43,7 @@ export function buildConciergePorts(): RespondToCallerMessagePorts {
   const calendar = new DelegatedCalendarAdapter(identityClient, calendarCredentialProviderName, calendarApiUrl);
   const budget = new CodeInterpreterBudgetAdapter(identityClient, codeInterpreterId);
   const priceCheck = new BrowserToolPriceCheckAdapter(region, browserId, priceCheckSiteUrl);
-  const knowledgeBase = new KnowledgeBaseGatewayAdapter(gatewayUrl, createSigV4Fetch(region, GATEWAY_SIGNING_SERVICE));
+  const knowledgeBase = new BedrockKnowledgeBaseAdapter(new BedrockAgentRuntimeClient({ region }), knowledgeBaseId);
 
   return {
     modelClient: new BedrockConverseModelClient(new BedrockRuntimeClient({ region }), modelId),

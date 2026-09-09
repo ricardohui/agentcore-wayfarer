@@ -14,6 +14,7 @@ import type { FlightCandidate, FlightCandidateId } from "../domain/flight-candid
 import type { GatewayError } from "../domain/gateway-error";
 import type { Hold, HoldId } from "../domain/hold";
 import type { HotelCandidate, HotelCandidateId } from "../domain/hotel-candidate";
+import type { KnowledgeBaseError } from "../domain/knowledge-base-error";
 import type { LocalPrice } from "../domain/local-price";
 import type { MemoryError } from "../domain/memory-error";
 import type { PriceCheckError } from "../domain/price-check-error";
@@ -159,14 +160,13 @@ export interface PriceCheckPort {
   ): Promise<Result<LocalPrice, PriceCheckError>>;
 }
 
-// Knowledge Base's destination-guide retrieval (issue #21 / ADR-0009): a
-// second, distinct Gateway target (AgentCore's native `bedrock-knowledge-bases`
-// connector, not a Lambda/OpenAPI target like BookingGatewayPort's) fronting a
-// Bedrock Managed Knowledge Base. Read-only and ungated — no Policy
+// Knowledge Base's destination-guide retrieval (issue #21 / ADR-0010): a
+// direct in-process `bedrock-agent-runtime` Retrieve call against a Bedrock
+// Managed Knowledge Base — no Gateway hop. Read-only and ungated — no Policy
 // consequence, same treatment as search-flights/search-hotels — so unlike
 // BookingGatewayPort this takes no sessionId and returns no Gated variant.
 export interface KnowledgeBasePort {
-  retrieve(query: string): Promise<Result<readonly DestinationGuideExcerpt[], GatewayError>>;
+  retrieve(query: string): Promise<Result<readonly DestinationGuideExcerpt[], KnowledgeBaseError>>;
 }
 
 export interface SessionLock {

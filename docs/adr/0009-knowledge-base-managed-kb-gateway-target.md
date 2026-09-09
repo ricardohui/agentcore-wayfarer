@@ -1,5 +1,9 @@
 # Knowledge Base rides a Managed KB behind a new Gateway connector target, not a classic KB or an in-process bypass
 
+> Superseded by ADR-0010: destination-guide retrieval no longer goes through a
+> Gateway target. The Managed-KB-over-classic-KB choice below still stands;
+> only the Gateway-vs-direct-call choice was reversed.
+
 Wayfarer's Concierge (issue #12) needed a way to ground answers in retrieval-augmented
 data. Research (`docs/research/agentcore-knowledge-base-access.md`) surfaced a
 prerequisite fact that decides most of this ticket by itself: AWS ships two distinct
