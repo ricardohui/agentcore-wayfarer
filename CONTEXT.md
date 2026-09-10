@@ -45,6 +45,22 @@ treatment as search-flights/search-hotels.
 _Avoid_: calling this a 12th "Primitive" — see Primitive, above. Also avoid "RAG" bare
 as a glossary term — always say Knowledge Base, the concrete AWS resource.
 
+## Guardrail
+
+A Bedrock Guardrail applied to the Concierge's own Converse calls (issue #26 /
+ADR-0011) — blanket protection (`guardrailConfig`) on every Caller turn, plus
+selective `guardContent` wrapping around the one tool result that carries
+genuinely external-sourced free text: Knowledge Base retrieval. Every other
+tool result is left unwrapped, including Browser Tool's price-check — its
+Live price is nested inside `hold-flight`/`hold-hotel`'s own strictly-parsed
+`{amount, currency}` payload, not an independently-addressable tool result. A
+model-invocation capability, not an AgentCore primitive — see Primitive,
+above.
+_Avoid_: calling this a "Primitive" — same caution as Knowledge Base; it's
+applied at the Bedrock Converse layer inside Runtime, not a primitive of
+its own. Also avoid assuming Browser Tool's price-check gets the same
+`guardContent` treatment as Knowledge Base — it doesn't (see above).
+
 ## Scenario beat
 
 A concrete moment in Wayfarer's user journey (e.g. "user asks to plan a 3-city trip",

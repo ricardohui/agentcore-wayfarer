@@ -37,6 +37,11 @@ export default defineConfig({
       // its network boundary.
       BROWSER_ID: "test-browser-id",
       PRICE_CHECK_SITE_URL: "http://test-price-check-site.s3-website-us-east-1.amazonaws.com/index.html",
+      // The Guardrail (issue #26) — composition-root default for
+      // BedrockConverseModelClient's guardrailConfig, matched by
+      // tests/concierge/support/bedrock-network-boundary.ts.
+      GUARDRAIL_ID: "test-guardrail-id",
+      GUARDRAIL_VERSION: "1",
     },
   },
 });

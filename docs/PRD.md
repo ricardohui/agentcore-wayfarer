@@ -491,6 +491,75 @@ Delivery is best-effort and silent on failure, matching the Traces exporter's ow
 
 Source: ADR-0007's Revision 3 / ADR-0008's Revision (issue #23).
 
+## REQ-GUARDRAIL-001 — Blanket content-safety protection applies to every Caller turn
+
+A Bedrock Guardrail is attached via `guardrailConfig` (`trace: "disabled"`) to every
+`ConverseCommand` call the Concierge makes, not just some of them. It denies four narrow
+topics (financial/investment advice, medical/health advice, legal advice, general
+non-travel Q&A) without catching travel-relevant health/safety questions or destination
+entry-requirement facts; applies `PROMPT_ATTACK`/`MISCONDUCT` content filters at `HIGH`
+and `HATE`/`INSULTS`/`SEXUAL`/`VIOLENCE` at `MEDIUM`; and `BLOCK`s exactly four PII entity
+types (credit/debit card number, US SSN, US passport number, driver's license/ID),
+leaving every other entity type (name, address, phone, email) untouched so Memory's
+personalization (REQ-MEMORY-002) keeps working.
+
+Source: issue #26, acceptance criterion 1; revised by ADR-0011.
+
+## REQ-GUARDRAIL-002 — Knowledge Base retrieval content is contextually grounded
+
+A contextual grounding policy (grounding and relevance thresholds both 0.7) is
+configured on the guardrail, and a successful `retrieve-destination-guide` tool result
+is the only tool result wrapped in `guardContent` blocks — one tagged `grounding_source`
+(the retrieved excerpt text) and one tagged `query` (the model's own tool-call query
+argument), since a contextual grounding check needs both halves of that pair to run at
+all. An errored retrieval, a result with zero excerpts, or an unparseable query is left
+unwrapped, since there's no real content to ground against. Every other tool result
+(`search-flights`, `search-hotels`, `hold-flight`, `hold-hotel`, `approve-hold`,
+`write-calendar-event`) is always left unwrapped — none of them carry independently-
+addressable free text; Browser Tool's price-check result in particular is nested inside
+`hold-flight`/`hold-hotel`'s own strictly-parsed payload, not its own tool result
+(ADR-0011).
+
+Source: issue #26, acceptance criteria 2 and 3; revised by ADR-0011.
+
+## REQ-GUARDRAIL-003 — The guardContent-wrapping decision is a pure, exhaustively unit-tested branch
+
+`toToolResultContentBlocks()` (`src/concierge/adapter/bedrock-converse-model-client.ts`)
+is a pure function — `ToolCall` + `ToolCallResult` in, `ContentBlock[]` out, no AWS SDK
+call at this seam — exhaustively tested for the one grounded tool name and a
+representative case of every other tool name passing through unwrapped.
+
+Source: issue #26, acceptance criterion 4 (`tests/concierge/adapter/bedrock-converse-model-client.spec.ts`).
+
+## REQ-GUARDRAIL-004 — The Guardrail is enforced by IAM, not just application code
+
+The Runtime's own execution role holds `bedrock:ApplyGuardrail` scoped to the guardrail's
+ARN (required for any Converse call carrying `guardrailConfig`, confirmed live — a
+Converse call fails with `AccessDeniedException` without it, distinct from and in
+addition to `bedrock:InvokeModel` on the foundation model), plus an explicit `Deny` on
+`bedrock:InvokeModel`/`InvokeModelWithResponseStream`, keyed on
+`bedrock:GuardrailIdentifier` `StringNotEquals` this guardrail's pinned `arn:...:version`
+— attached to the Concierge Runtime's own execution role only, not account- or org-wide
+— so a future code change that drops `guardrailConfig` fails closed instead of silently
+invoking the model unguarded.
+
+Source: issue #26, acceptance criterion 5.
+
+## REQ-GUARDRAIL-005 — The Guardrail's infrastructure is fully CDK-provisioned, with a pinned numbered version
+
+A `CfnGuardrail` (content filters, denied topics, sensitive-information policy,
+contextual grounding policy) plus a separate `CfnGuardrailVersion` pinning a numbered
+version (never `DRAFT`) are provisioned by CDK — no L2 construct exists for this in the
+installed `aws-cdk-lib` version, so `GuardrailConstruct` is built directly against the
+two L1s, matching this project's CDK-first convention. Verified by `cdk synth`
+succeeding, not an automated test, same as REQ-KB-005. Live-verified post-deploy against
+the real Runtime with three probes (an off-topic ask, a fake credit-card-shaped number,
+and a Knowledge-Base-grounded destination question), each confirmed via CloudWatch — a
+manual step following this project's existing manual-changeset deploy flow, not an
+automated test.
+
+Source: issue #26, acceptance criteria 6, 7, and 8.
+
 ## Changelog
 
 - 2026-08-28 — Added REQ-RUNTIME-001, REQ-RUNTIME-002, REQ-RUNTIME-003 for the Runtime
@@ -614,3 +683,23 @@ Source: ADR-0007's Revision 3 / ADR-0008's Revision (issue #23).
   restructured to set it unconditionally from a single exit point. With both fixed, the final
   3-transcript dataset (regenerated once more so every span postdates both fixes) matches all 6
   of issue #23's acceptance criteria exactly — both gates, all three transcripts.
+- 2026-09-09 — Added REQ-GUARDRAIL-001 through REQ-GUARDRAIL-005 for the Bedrock Guardrail
+  applied to the Concierge's own Converse calls (issue #26 / ADR-0011): blanket content-safety
+  protection on every Caller turn, contextual grounding scoped to Knowledge Base retrieval only
+  (not Browser Tool's price-check, which is nested inside hold-flight/hold-hotel's own payload,
+  not its own tool result), IAM-enforced via a `bedrock:GuardrailIdentifier` Deny on the Runtime's
+  own execution role, and a pinned numbered guardrail version provisioned by CDK's `CfnGuardrail`/
+  `CfnGuardrailVersion` L1s (no L2 exists).
+- 2026-09-09 — Deployed the Guardrail (issue #26 / ADR-0011) and live-verified all three
+  probes against the real Runtime. The real `CreateGuardrail` call surfaced two config
+  errors the AWS API docs don't make obvious up front (`PROMPT_ATTACK`'s `outputStrength`
+  must be `NONE`; denied-topic `definition`s are capped at 200 characters and must avoid
+  negative/exception framing — the original "not to be confused with..." clauses were
+  rewritten to scope each topic to a *personal* matter instead, same carve-out, no
+  exclusion language). Once deployed, the first real Converse call still failed
+  (`AccessDeniedException` on `bedrock:ApplyGuardrail`) — a Converse call carrying
+  `guardrailConfig` needs that grant on the guardrail's own ARN, separate from
+  `bedrock:InvokeModel` on the foundation model; added to `ConciergeStack`. With both
+  fixed, all three probes (denied-topic block, PII block, KB-grounded destination answer)
+  passed against the deployed Runtime, confirmed via CloudWatch — REQ-GUARDRAIL-004 and
+  REQ-GUARDRAIL-005 are now fully verified, not just synth-checked.

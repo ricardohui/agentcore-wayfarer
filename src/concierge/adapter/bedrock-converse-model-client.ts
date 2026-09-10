@@ -1,6 +1,7 @@
 import {
   BedrockRuntimeClient,
   ConverseCommand,
+  type ContentBlock,
   type ConverseCommandOutput,
   type Message,
   type SystemContentBlock,
@@ -15,8 +16,8 @@ import type { ConversationTurn } from "../domain/conversation-turn";
 import { err, ok, type Result } from "../domain/result";
 import type { RuntimeSessionId } from "../domain/runtime-session-id";
 import { CALENDAR_TOOL_DEFINITIONS } from "../usecase/calendar-tool-catalog";
-import { KNOWLEDGE_BASE_TOOL_DEFINITIONS } from "../usecase/knowledge-base-tool-catalog";
-import type { ModelClient, ModelError, ToolCall, ToolExecutor } from "../usecase/ports";
+import { KNOWLEDGE_BASE_TOOL_DEFINITIONS, type KnowledgeBaseToolName } from "../usecase/knowledge-base-tool-catalog";
+import type { ModelClient, ModelError, ToolCall, ToolCallResult, ToolExecutor } from "../usecase/ports";
 import { withSpan } from "../observability/tracing";
 
 const MAX_OUTPUT_TOKENS = 1024;
@@ -43,10 +44,23 @@ const TOOL_CONFIG: ToolConfiguration = {
   })),
 };
 
+// The one tool result that carries genuinely external-sourced free text
+// (issue #26 / ADR-0011) — every other tool result (booking, calendar) is
+// either structured/strictly-typed JSON or, for Browser Tool's price-check,
+// nested inside hold-flight/hold-hotel's own payload rather than exposed as
+// an independently-addressable tool result, so only this one gets
+// `guardContent`-wrapped for the Guardrail's contextual grounding check.
+const GROUNDED_TOOL_NAME: KnowledgeBaseToolName = "retrieve-destination-guide";
+
 export class BedrockConverseModelClient implements ModelClient {
   constructor(
     private readonly client: BedrockRuntimeClient,
     private readonly modelId: string,
+    // The Guardrail (issue #26 / ADR-0011): blanket protection on every
+    // Caller turn. `trace: "disabled"` below keeps flagged (possibly
+    // sensitive) text out of the API response and this Runtime's own logs.
+    private readonly guardrailId: string,
+    private readonly guardrailVersion: string,
   ) {}
 
   async generateReply(
@@ -80,6 +94,11 @@ export class BedrockConverseModelClient implements ModelClient {
                 system,
                 toolConfig: TOOL_CONFIG,
                 inferenceConfig: { maxTokens: MAX_OUTPUT_TOKENS },
+                guardrailConfig: {
+                  guardrailIdentifier: this.guardrailId,
+                  guardrailVersion: this.guardrailVersion,
+                  trace: "disabled",
+                },
               }),
             );
             span.setAttribute("gen_ai.output.messages", JSON.stringify(converseResponse.output?.message ?? {}));
@@ -168,14 +187,63 @@ async function toToolResultMessage(
   const results = await Promise.all(toolCalls.map((call) => toolExecutor.execute(call, sessionId)));
   return {
     role: "user",
-    content: results.map((result) => ({
-      toolResult: {
-        toolUseId: result.toolUseId,
-        status: result.isError ? ("error" as const) : ("success" as const),
-        content: [{ json: result.content as DocumentType }],
-      },
-    })),
+    content: toolCalls.flatMap((call, index) => toToolResultContentBlocks(call, results[index]!)),
   };
+}
+
+// The guardContent-wrapping seam (issue #26 / ADR-0011): a pure branch, no
+// AWS SDK involvement, kept separate from toToolResultMessage so it's
+// unit-testable on its own. Every ContentBlock's own toolResult is left
+// exactly as before (guardContent isn't a variant of ToolResultContentBlock
+// — confirmed against the SDK's own types, matching the Converse API's
+// documented behavior that toolResult content is never guardrail-evaluated
+// regardless). A successful GROUNDED_TOOL_NAME result with real excerpt text
+// and the model's actual query additionally gets two sibling guardContent
+// blocks in the same message — contextual grounding needs both halves of
+// the source/query pair to run at all (confirmed against AWS's own
+// contextual-grounding-check docs); an errored result, or one with nothing
+// to ground (no excerpts, or an unparseable query), is left as a plain
+// toolResult, since there's no real content to check the model's eventual
+// answer against.
+export function toToolResultContentBlocks(call: ToolCall, result: ToolCallResult): ContentBlock[] {
+  const toolResultBlock: ContentBlock = {
+    toolResult: {
+      toolUseId: result.toolUseId,
+      status: result.isError ? ("error" as const) : ("success" as const),
+      content: [{ json: result.content as DocumentType }],
+    },
+  };
+  if (call.name !== GROUNDED_TOOL_NAME || result.isError) {
+    return [toolResultBlock];
+  }
+
+  const groundingSourceText = toGroundingSourceText(result.content);
+  const queryText = toQueryText(call.input);
+  if (groundingSourceText.length === 0 || queryText.length === 0) {
+    return [toolResultBlock];
+  }
+
+  return [
+    toolResultBlock,
+    { guardContent: { text: { text: groundingSourceText, qualifiers: ["grounding_source"] } } },
+    { guardContent: { text: { text: queryText, qualifiers: ["query"] } } },
+  ];
+}
+
+function toGroundingSourceText(content: unknown): string {
+  const excerpts = (content as { excerpts?: unknown } | undefined)?.excerpts;
+  if (!Array.isArray(excerpts)) {
+    return "";
+  }
+  return excerpts
+    .map((excerpt) => String((excerpt as { text?: unknown }).text ?? ""))
+    .join("\n\n")
+    .trim();
+}
+
+function toQueryText(input: unknown): string {
+  const query = (input as { query?: unknown } | undefined)?.query;
+  return typeof query === "string" ? query.trim() : "";
 }
 
 function toConciergeReply(response: ConverseCommandOutput): Result<ConciergeReply, ModelError> {

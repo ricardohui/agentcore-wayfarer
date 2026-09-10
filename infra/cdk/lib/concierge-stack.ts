@@ -7,6 +7,7 @@ import { CONCIERGE_MODEL_ID } from "../../../src/concierge/infra/model-id";
 import { CONCIERGE_RUNTIME_NAME } from "../../../src/concierge/observability/runtime-name";
 import { BookingGatewayConstruct } from "./booking-gateway-construct";
 import { EvaluationsConstruct } from "./evaluations-construct";
+import { GuardrailConstruct } from "./guardrail-construct";
 import { IdentityConstruct } from "./identity-construct";
 import { KnowledgeBaseConstruct } from "./knowledge-base-construct";
 import { PriceCheckSiteConstruct } from "./price-check-site-construct";
@@ -24,6 +25,7 @@ export class ConciergeStack extends cdk.Stack {
   public readonly priceCheckBrowser: agentcore.BrowserCustom;
   public readonly evaluations: EvaluationsConstruct;
   public readonly onlineEvaluationConfig: agentcore.OnlineEvaluationConfig;
+  public readonly guardrail: GuardrailConstruct;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -37,6 +39,11 @@ export class ConciergeStack extends cdk.Stack {
     // bedrock-agent-runtime Retrieve call from the Runtime itself — no
     // Gateway target.
     this.knowledgeBase = new KnowledgeBaseConstruct(this, "KnowledgeBase");
+
+    // The Guardrail (issue #26 / ADR-0011): blanket content-safety
+    // protection on every Converse call, plus contextual grounding for
+    // Knowledge Base retrieval content.
+    this.guardrail = new GuardrailConstruct(this, "Guardrail");
 
     // Evaluations (issue #23 / ADR-0007): two AND'd custom evaluators judging
     // itinerary quality, triggered on-demand against live-generated session
@@ -121,6 +128,8 @@ export class ConciergeStack extends cdk.Stack {
         BROWSER_ID: this.priceCheckBrowser.browserId,
         PRICE_CHECK_SITE_URL: this.priceCheckSite.siteUrl,
         KNOWLEDGE_BASE_ID: this.knowledgeBase.knowledgeBase.attrKnowledgeBaseId,
+        GUARDRAIL_ID: this.guardrail.guardrail.attrGuardrailId,
+        GUARDRAIL_VERSION: this.guardrail.version.attrVersion,
       },
     });
 
@@ -130,6 +139,36 @@ export class ConciergeStack extends cdk.Stack {
         resources: [
           `arn:${this.partition}:bedrock:${this.region}::foundation-model/${CONCIERGE_MODEL_ID}`,
         ],
+      }),
+    );
+    // The Guardrail (issue #26 / ADR-0011): a Converse call carrying
+    // guardrailConfig needs bedrock:ApplyGuardrail on the guardrail's own
+    // resource ARN, separate from bedrock:InvokeModel on the foundation
+    // model — confirmed live: the first post-deploy Converse call failed
+    // with an AccessDeniedException naming this exact action before this
+    // grant was added.
+    this.runtime.role.addToPrincipalPolicy(
+      new iam.PolicyStatement({
+        actions: ["bedrock:ApplyGuardrail"],
+        resources: [this.guardrail.guardrail.attrGuardrailArn],
+      }),
+    );
+    // The Guardrail's IAM enforcement (issue #26 / ADR-0011): an explicit
+    // Deny on this role alone (not account- or org-wide) that fails closed
+    // if InvokeModel/InvokeModelWithResponseStream is ever called without
+    // this exact pinned guardrail+version attached — so no future code
+    // change can silently invoke the model unguarded. The condition value's
+    // ARN:version format matches AWS's own documented pattern for this key.
+    this.runtime.role.addToPrincipalPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.DENY,
+        actions: ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+        resources: ["*"],
+        conditions: {
+          StringNotEquals: {
+            "bedrock:GuardrailIdentifier": `${this.guardrail.guardrail.attrGuardrailArn}:${this.guardrail.version.attrVersion}`,
+          },
+        },
       }),
     );
     this.runtime.role.addToPrincipalPolicy(
@@ -281,5 +320,7 @@ export class ConciergeStack extends cdk.Stack {
     new cdk.CfnOutput(this, "OnlineEvaluationConfigId", {
       value: this.onlineEvaluationConfig.onlineEvaluationConfigId,
     });
+    new cdk.CfnOutput(this, "GuardrailId", { value: this.guardrail.guardrail.attrGuardrailId });
+    new cdk.CfnOutput(this, "GuardrailVersion", { value: this.guardrail.version.attrVersion });
   }
 }

@@ -34,6 +34,8 @@ export function buildConciergePorts(): RespondToCallerMessagePorts {
   const browserId = requireEnv("BROWSER_ID");
   const priceCheckSiteUrl = requireEnv("PRICE_CHECK_SITE_URL");
   const knowledgeBaseId = requireEnv("KNOWLEDGE_BASE_ID");
+  const guardrailId = requireEnv("GUARDRAIL_ID");
+  const guardrailVersion = requireEnv("GUARDRAIL_VERSION");
 
   const bookingGateway = new BookingGatewayAdapter(
     gatewayUrl,
@@ -46,7 +48,7 @@ export function buildConciergePorts(): RespondToCallerMessagePorts {
   const knowledgeBase = new BedrockKnowledgeBaseAdapter(new BedrockAgentRuntimeClient({ region }), knowledgeBaseId);
 
   return {
-    modelClient: new BedrockConverseModelClient(new BedrockRuntimeClient({ region }), modelId),
+    modelClient: new BedrockConverseModelClient(new BedrockRuntimeClient({ region }), modelId, guardrailId, guardrailVersion),
     memory: new AgentCoreMemoryAdapter(identityClient, memoryId),
     sessionLock: new InMemorySessionLock(),
     toolExecutor: new CompositeToolExecutor([

@@ -1,11 +1,16 @@
 import { BedrockRuntimeClient, ConverseCommand, ThrottlingException } from "@aws-sdk/client-bedrock-runtime";
 import { beforeEach, describe, expect, it } from "vitest";
-import { BedrockConverseModelClient } from "../../../src/concierge/adapter/bedrock-converse-model-client";
+import {
+  BedrockConverseModelClient,
+  toToolResultContentBlocks,
+} from "../../../src/concierge/adapter/bedrock-converse-model-client";
 import { bedrockMock } from "../support/bedrock-network-boundary";
 import { FakeToolExecutor } from "../support/fakes";
 import { aCallerMessage, aCallerPreference, aRuntimeSessionId } from "../support/object-mothers";
 
 const modelId = "openai.gpt-oss-120b-1:0";
+const guardrailId = "gr-abc123";
+const guardrailVersion = "1";
 
 describe("BedrockConverseModelClient", () => {
   let toolExecutor: FakeToolExecutor;
@@ -19,7 +24,7 @@ describe("BedrockConverseModelClient", () => {
     bedrockMock.on(ConverseCommand).resolves({
       output: { message: { role: "assistant", content: [{ text: "Hello traveler!" }] } },
     });
-    const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId);
+    const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId, guardrailId, guardrailVersion);
 
     const result = await client.generateReply([], aCallerMessage("Hi"), toolExecutor, [], aRuntimeSessionId());
 
@@ -30,7 +35,7 @@ describe("BedrockConverseModelClient", () => {
     bedrockMock.on(ConverseCommand).resolves({
       output: { message: { role: "assistant", content: [{ text: "Welcome back!" }] } },
     });
-    const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId);
+    const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId, guardrailId, guardrailVersion);
 
     await client.generateReply([], aCallerMessage("Hi"), toolExecutor, [aCallerPreference("home airport: NRT")], aRuntimeSessionId());
 
@@ -42,7 +47,7 @@ describe("BedrockConverseModelClient", () => {
     bedrockMock.on(ConverseCommand).resolves({
       output: { message: { role: "assistant", content: [{ text: "Hello traveler!" }] } },
     });
-    const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId);
+    const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId, guardrailId, guardrailVersion);
 
     await client.generateReply([], aCallerMessage("Hi"), toolExecutor, [], aRuntimeSessionId());
 
@@ -54,7 +59,7 @@ describe("BedrockConverseModelClient", () => {
     bedrockMock.on(ConverseCommand).resolves({
       output: { message: { role: "assistant", content: [{ text: "Hello traveler!" }] } },
     });
-    const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId);
+    const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId, guardrailId, guardrailVersion);
 
     await client.generateReply([], aCallerMessage("Hi"), toolExecutor, [], aRuntimeSessionId());
 
@@ -67,7 +72,7 @@ describe("BedrockConverseModelClient", () => {
     bedrockMock.on(ConverseCommand).resolves({
       output: { message: { role: "assistant", content: [{ text: "Hello traveler!" }] } },
     });
-    const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId);
+    const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId, guardrailId, guardrailVersion);
 
     await client.generateReply([], aCallerMessage("Hi"), toolExecutor, [], aRuntimeSessionId());
 
@@ -76,11 +81,27 @@ describe("BedrockConverseModelClient", () => {
     expect(calls[0]?.args[0].input.inferenceConfig?.maxTokens).toBeTypeOf("number");
   });
 
+  it("attaches the Guardrail to every Converse call, with tracing disabled", async () => {
+    bedrockMock.on(ConverseCommand).resolves({
+      output: { message: { role: "assistant", content: [{ text: "Hello traveler!" }] } },
+    });
+    const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId, guardrailId, guardrailVersion);
+
+    await client.generateReply([], aCallerMessage("Hi"), toolExecutor, [], aRuntimeSessionId());
+
+    const calls = bedrockMock.commandCalls(ConverseCommand);
+    expect(calls[0]?.args[0].input.guardrailConfig).toEqual({
+      guardrailIdentifier: guardrailId,
+      guardrailVersion,
+      trace: "disabled",
+    });
+  });
+
   it("advertises the 4 booking tools in every Converse call", async () => {
     bedrockMock.on(ConverseCommand).resolves({
       output: { message: { role: "assistant", content: [{ text: "Hello traveler!" }] } },
     });
-    const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId);
+    const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId, guardrailId, guardrailVersion);
 
     await client.generateReply([], aCallerMessage("Hi"), toolExecutor, [], aRuntimeSessionId());
 
@@ -95,7 +116,7 @@ describe("BedrockConverseModelClient", () => {
     bedrockMock.on(ConverseCommand).rejects(
       new ThrottlingException({ message: "too many requests", $metadata: {} }),
     );
-    const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId);
+    const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId, guardrailId, guardrailVersion);
 
     const result = await client.generateReply([], aCallerMessage("Hi"), toolExecutor, [], aRuntimeSessionId());
 
@@ -115,7 +136,7 @@ describe("BedrockConverseModelClient", () => {
         },
       },
     });
-    const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId);
+    const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId, guardrailId, guardrailVersion);
 
     const result = await client.generateReply([], aCallerMessage("Hi"), toolExecutor, [], aRuntimeSessionId());
 
@@ -126,7 +147,7 @@ describe("BedrockConverseModelClient", () => {
     bedrockMock.on(ConverseCommand).resolves({
       output: { message: { role: "assistant", content: [] } },
     });
-    const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId);
+    const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId, guardrailId, guardrailVersion);
 
     const result = await client.generateReply([], aCallerMessage("Hi"), toolExecutor, [], aRuntimeSessionId());
 
@@ -152,7 +173,7 @@ describe("BedrockConverseModelClient", () => {
         output: { message: { role: "assistant", content: [{ text: "Found a flight for you!" }] } },
       });
     toolExecutor.respondTo("call-1", { isError: false, content: [{ candidateId: "flight-1" }] });
-    const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId);
+    const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId, guardrailId, guardrailVersion);
 
     const result = await client.generateReply([], aCallerMessage("Find me a flight to Tokyo"), toolExecutor, [], aRuntimeSessionId());
 
@@ -195,7 +216,7 @@ describe("BedrockConverseModelClient", () => {
       });
     toolExecutor.respondTo("call-1", { isError: false, content: [{ candidateId: "flight-1" }] });
     toolExecutor.respondTo("call-2", { isError: false, content: [{ candidateId: "hotel-1" }] });
-    const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId);
+    const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId, guardrailId, guardrailVersion);
 
     const result = await client.generateReply([], aCallerMessage("Plan my trip"), toolExecutor, [], aRuntimeSessionId());
 
@@ -219,7 +240,7 @@ describe("BedrockConverseModelClient", () => {
         output: { message: { role: "assistant", content: [{ text: "That candidate is no longer available." }] } },
       });
     toolExecutor.respondTo("call-1", { isError: true, content: { error: "candidate not found" } });
-    const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId);
+    const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId, guardrailId, guardrailVersion);
 
     const result = await client.generateReply([], aCallerMessage("Hold that flight"), toolExecutor, [], aRuntimeSessionId());
 
@@ -252,7 +273,7 @@ describe("BedrockConverseModelClient", () => {
         output: { message: { role: "assistant", content: [{ text: "Handled." }] } },
       });
     toolExecutor.respondTo("call-1", { isError: true, content: { error: "unknown tool: " } });
-    const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId);
+    const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId, guardrailId, guardrailVersion);
 
     const result = await client.generateReply([], aCallerMessage("Do something"), toolExecutor, [], aRuntimeSessionId());
 
@@ -271,7 +292,7 @@ describe("BedrockConverseModelClient", () => {
       stopReason: "tool_use",
     });
     toolExecutor.respondTo("call-loop", { isError: false, content: [] });
-    const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId);
+    const client = new BedrockConverseModelClient(new BedrockRuntimeClient({}), modelId, guardrailId, guardrailVersion);
 
     const result = await client.generateReply([], aCallerMessage("Loop forever"), toolExecutor, [], aRuntimeSessionId());
 
@@ -279,5 +300,111 @@ describe("BedrockConverseModelClient", () => {
       ok: false,
       error: { type: "InvalidResponse", message: "model exceeded the maximum tool-use rounds" },
     });
+  });
+});
+
+// The guardContent-wrapping seam (issue #26 / ADR-0011): a pure function, no
+// AWS SDK involvement — exhaustively covers the one grounded tool
+// (retrieve-destination-guide) plus a representative case of every other
+// tool name passing through unwrapped.
+describe("toToolResultContentBlocks", () => {
+  it("wraps a successful retrieve-destination-guide result in sibling guardContent blocks tagged grounding_source and query", () => {
+    const call = { toolUseId: "call-1", name: "retrieve-destination-guide", input: { query: "visa for Tokyo" } };
+    const result = {
+      toolUseId: "call-1",
+      isError: false,
+      content: { excerpts: [{ text: "Tokyo visa info." }, { text: "Tokyo customs info." }] },
+    };
+
+    expect(toToolResultContentBlocks(call, result)).toEqual([
+      {
+        toolResult: {
+          toolUseId: "call-1",
+          status: "success",
+          content: [{ json: result.content }],
+        },
+      },
+      {
+        guardContent: {
+          text: { text: "Tokyo visa info.\n\nTokyo customs info.", qualifiers: ["grounding_source"] },
+        },
+      },
+      {
+        guardContent: {
+          text: { text: "visa for Tokyo", qualifiers: ["query"] },
+        },
+      },
+    ]);
+  });
+
+  it("leaves an errored retrieve-destination-guide result as a plain toolResult — no real content to ground against", () => {
+    const call = { toolUseId: "call-1", name: "retrieve-destination-guide", input: { query: "visa for Tokyo" } };
+    const result = { toolUseId: "call-1", isError: true, content: { error: "the Knowledge Base is unavailable" } };
+
+    expect(toToolResultContentBlocks(call, result)).toEqual([
+      {
+        toolResult: {
+          toolUseId: "call-1",
+          status: "error",
+          content: [{ json: result.content }],
+        },
+      },
+    ]);
+  });
+
+  it("leaves a successful retrieve-destination-guide result with zero excerpts as a plain toolResult", () => {
+    const call = { toolUseId: "call-1", name: "retrieve-destination-guide", input: { query: "visa for Atlantis" } };
+    const result = { toolUseId: "call-1", isError: false, content: { excerpts: [] } };
+
+    expect(toToolResultContentBlocks(call, result)).toEqual([
+      {
+        toolResult: {
+          toolUseId: "call-1",
+          status: "success",
+          content: [{ json: result.content }],
+        },
+      },
+    ]);
+  });
+
+  it("leaves a successful retrieve-destination-guide result with an unparseable query as a plain toolResult", () => {
+    const call = { toolUseId: "call-1", name: "retrieve-destination-guide", input: {} };
+    const result = {
+      toolUseId: "call-1",
+      isError: false,
+      content: { excerpts: [{ text: "Tokyo visa info." }] },
+    };
+
+    expect(toToolResultContentBlocks(call, result)).toEqual([
+      {
+        toolResult: {
+          toolUseId: "call-1",
+          status: "success",
+          content: [{ json: result.content }],
+        },
+      },
+    ]);
+  });
+
+  it.each([
+    "search-flights",
+    "search-hotels",
+    "hold-flight",
+    "hold-hotel",
+    "approve-hold",
+    "write-calendar-event",
+  ])("leaves a %s result as a plain toolResult, with no guardContent block", (name) => {
+    const call = { toolUseId: "call-1", name, input: {} };
+    const result = { toolUseId: "call-1", isError: false, content: { ok: true } };
+
+    expect(toToolResultContentBlocks(call, result)).toEqual([
+      {
+        toolResult: {
+          toolUseId: "call-1",
+          status: "success",
+          content: [{ json: result.content }],
+        },
+      },
+    ]);
   });
 });
