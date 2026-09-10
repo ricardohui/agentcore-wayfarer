@@ -299,6 +299,10 @@ export class ConciergeStack extends cdk.Stack {
     new cdk.CfnOutput(this, "RuntimeArn", { value: this.runtime.agentRuntimeArn });
     new cdk.CfnOutput(this, "RuntimeId", { value: this.runtime.agentRuntimeId });
     new cdk.CfnOutput(this, "GatewayUrl", { value: this.bookingGateway.gateway.attrGatewayUrl });
+    // Read by the Harness comparison build's own stack (issue #22 / ADR-0002)
+    // to wire its agentcore_gateway tool to this same Gateway target — that
+    // stack never references this one's CDK constructs directly.
+    new cdk.CfnOutput(this, "GatewayArn", { value: this.bookingGateway.gateway.attrGatewayArn });
     new cdk.CfnOutput(this, "PolicyEngineId", { value: this.bookingGateway.policyEngine.attrPolicyEngineId });
     new cdk.CfnOutput(this, "MemoryId", { value: this.memory.memoryId });
     new cdk.CfnOutput(this, "UserPoolId", { value: this.identity.userPool.userPoolId });

@@ -15,7 +15,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "cdk": "cdk",
-    "deploy": "npm run build:handler && npm run build:booking-gateway && npm run build:calendar-oauth-server && npm run build:budget-gate-evaluator && cdk deploy --app \"npx ts-node --prefer-ts-exts infra/cdk/bin/app.ts\""
+    "deploy": "npm run build:handler && npm run build:booking-gateway && npm run build:calendar-oauth-server && npm run build:budget-gate-evaluator && cdk deploy --app \"npx ts-node --prefer-ts-exts infra/cdk/bin/app.ts\"",
+    "synth:harness-comparison": "cdk synth --app \"npx ts-node --prefer-ts-exts infra/cdk/bin/harness-comparison-app.ts\"",
+    "deploy:harness-comparison": "cdk deploy --app \"npx ts-node --prefer-ts-exts infra/cdk/bin/harness-comparison-app.ts\""
   },
   "dependencies": {
     "@aws-crypto/sha256-js": "^5.2.0",

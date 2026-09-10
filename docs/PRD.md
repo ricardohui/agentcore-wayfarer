@@ -560,6 +560,41 @@ automated test.
 
 Source: issue #26, acceptance criteria 6, 7, and 8.
 
+## REQ-HARNESS-001 — The comparison build completes the same search+hold beat as Gateway, invoked directly via InvokeHarness
+
+`InvokeHarness` against the standalone comparison Harness completes the same 3-city
+search-then-hold beat as the Concierge (REQ-GATEWAY-003), using the same booking Gateway
+target — the Harness's `agentcore_gateway` tool executes against the Gateway entirely on
+AWS's side, so this build owns no client-side tool-execution loop of its own. Verified by
+an acceptance test invoking `InvokeHarness` directly, with only the `BedrockAgentCoreClient`
+network boundary mocked (there is no client-observable HTTP call to intercept for the
+server-side Gateway hop).
+
+Source: issue #22, acceptance criteria 1 and 4.
+
+## REQ-HARNESS-002 — A per-invocation model override changes which model serves a call, with no redeploy
+
+`InvokeHarnessCommand`'s own `model` field, left unset, lets a call fall back to the
+Harness resource's stored declarative model config; set on one call only, it serves that
+call from a different Bedrock model while every other call keeps using the Harness's
+stored default — the Harness resource itself is never recreated or redeployed between the
+two calls.
+
+Source: issue #22, acceptance criterion 2.
+
+## REQ-HARNESS-003 — The comparison build is entirely separate from the Concierge's composition root and deployment
+
+The comparison Harness lives in its own CDK stack (`HarnessComparisonStack`) and bin entry
+(`infra/cdk/bin/harness-comparison-app.ts`), deployed by hand via
+`npm run deploy:harness-comparison` and never part of `npm run deploy`'s `ConciergeStack`.
+It references the already-deployed booking Gateway only by ARN (`ConciergeStack`'s own
+`GatewayArn` output, passed via CDK context), never by importing `ConciergeStack`'s CDK
+constructs — no shared runtime path with the live Concierge. Verified by `cdk synth`
+succeeding against `harness-comparison-app.ts` in isolation, not an automated test, same as
+REQ-GATEWAY-004.
+
+Source: issue #22, acceptance criterion 3; ADR-0002.
+
 ## Changelog
 
 - 2026-08-28 — Added REQ-RUNTIME-001, REQ-RUNTIME-002, REQ-RUNTIME-003 for the Runtime
@@ -703,3 +738,12 @@ Source: issue #26, acceptance criteria 6, 7, and 8.
   fixed, all three probes (denied-topic block, PII block, KB-grounded destination answer)
   passed against the deployed Runtime, confirmed via CloudWatch — REQ-GUARDRAIL-004 and
   REQ-GUARDRAIL-005 are now fully verified, not just synth-checked.
+- 2026-09-09 — Added REQ-HARNESS-001 through REQ-HARNESS-003 for Harness's standalone
+  comparison build (issue #22 / ADR-0002): the same 3-city search+hold beat as Gateway
+  (REQ-GATEWAY-003), reimplemented as pure declarative Harness config
+  (`HarnessComparisonConstruct`'s `CfnHarness`) and invoked via a thin
+  `invokeSearchAndHoldBeat` wrapper around `InvokeHarness` — no client-side tool-execution
+  loop, since the Harness's `agentcore_gateway` tool calls the booking Gateway entirely on
+  AWS's side. Lives in its own `HarnessComparisonStack`/bin entry, deployed by hand and
+  never wired into `ConciergeStack` or its deployment; `ConciergeStack` gained a `GatewayArn`
+  output so the comparison stack can reference the booking Gateway by ARN alone.
