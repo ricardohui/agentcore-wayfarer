@@ -5,6 +5,7 @@ import type { Construct } from "constructs";
 import { HARNESS_NAME } from "../../../src/harness-comparison/harness-name";
 import { HARNESS_DEFAULT_MODEL_ID } from "../../../src/harness-comparison/model-id";
 import { HARNESS_SYSTEM_PROMPT } from "../../../src/harness-comparison/system-prompt";
+import { confusedDeputyTrustPrincipal } from "./confused-deputy-trust-principal";
 
 export type HarnessComparisonConstructProps = {
   // The already-deployed booking Gateway's ARN (ConciergeStack's own
@@ -26,18 +27,7 @@ export class HarnessComparisonConstruct extends cdk.Resource {
 
     this.executionRole = new iam.Role(this, "ExecutionRole", {
       description: "Wayfarer Harness comparison build's execution role (issue #22)",
-      assumedBy: new iam.ServicePrincipal("bedrock-agentcore.amazonaws.com", {
-        conditions: {
-          StringEquals: { "aws:SourceAccount": cdk.Stack.of(this).account },
-          ArnLike: {
-            "aws:SourceArn": cdk.Stack.of(this).formatArn({
-              service: "bedrock-agentcore",
-              resource: "harness",
-              resourceName: "*",
-            }),
-          },
-        },
-      }),
+      assumedBy: confusedDeputyTrustPrincipal(this, "bedrock-agentcore.amazonaws.com", "bedrock-agentcore", "harness"),
     });
 
     this.executionRole.addToPrincipalPolicy(

@@ -7,6 +7,7 @@ import type { Construct } from "constructs";
 import { BOOKING_GATEWAY_TARGET_NAME } from "../../../src/booking-gateway/gateway-target-name";
 import { HOLD_APPROVAL_THRESHOLD_LOCAL_AMOUNT } from "../../../src/booking-gateway/hold-approval-threshold";
 import { BOOKING_TOOL_DEFINITIONS } from "../../../src/booking-gateway/tool-catalog";
+import { confusedDeputyTrustPrincipal } from "./confused-deputy-trust-principal";
 
 function bookingAction(toolName: string): string {
   return `AgentCore::Action::"${BOOKING_GATEWAY_TARGET_NAME}___${toolName}"`;
@@ -54,18 +55,7 @@ export class BookingGatewayConstruct extends cdk.Resource {
 
     this.gatewayRole = new iam.Role(this, "GatewayRole", {
       description: "Wayfarer booking Gateway's service role - invokes the mock router Lambda",
-      assumedBy: new iam.ServicePrincipal("bedrock-agentcore.amazonaws.com", {
-        conditions: {
-          StringEquals: { "aws:SourceAccount": cdk.Stack.of(this).account },
-          ArnLike: {
-            "aws:SourceArn": cdk.Stack.of(this).formatArn({
-              service: "bedrock-agentcore",
-              resource: "gateway",
-              resourceName: "*",
-            }),
-          },
-        },
-      }),
+      assumedBy: confusedDeputyTrustPrincipal(this, "bedrock-agentcore.amazonaws.com", "bedrock-agentcore", "gateway"),
     });
     this.routerLambda.grantInvoke(this.gatewayRole);
 

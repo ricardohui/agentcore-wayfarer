@@ -5,6 +5,7 @@ import * as iam from "aws-cdk-lib/aws-iam";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as s3deploy from "aws-cdk-lib/aws-s3-deployment";
 import type { Construct } from "constructs";
+import { confusedDeputyTrustPrincipal } from "./confused-deputy-trust-principal";
 
 const CONTENT_SOURCE_DIR = path.join(__dirname, "../../../src/destination-guides/content");
 
@@ -43,18 +44,7 @@ export class KnowledgeBaseConstruct extends cdk.Resource {
     // bedrock:InvokeModel on an embedding model).
     const knowledgeBaseRole = new iam.Role(this, "KnowledgeBaseRole", {
       description: "Wayfarer destination-guides Knowledge Base's service role - reads its S3 content bucket",
-      assumedBy: new iam.ServicePrincipal("bedrock.amazonaws.com", {
-        conditions: {
-          StringEquals: { "aws:SourceAccount": cdk.Stack.of(this).account },
-          ArnLike: {
-            "aws:SourceArn": cdk.Stack.of(this).formatArn({
-              service: "bedrock",
-              resource: "knowledge-base",
-              resourceName: "*",
-            }),
-          },
-        },
-      }),
+      assumedBy: confusedDeputyTrustPrincipal(this, "bedrock.amazonaws.com", "bedrock", "knowledge-base"),
     });
     this.bucket.grantRead(knowledgeBaseRole);
 
